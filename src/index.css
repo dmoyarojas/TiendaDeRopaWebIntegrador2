@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400;1,700&family=Outfit:wght@300;400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: #FAF8F5;
+  --color-foreground: #0D0D0D;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #0D0D0D;
+  --color-primary: #0D0D0D;
+  --color-primary-foreground: #FAF8F5;
+  --color-secondary: #F2EFE9;
+  --color-secondary-foreground: #0D0D0D;
+  --color-muted: #E8E4DC;
+  --color-muted-foreground: #6B6860;
+  --color-accent: #C9A96E;
+  --color-accent-foreground: #0D0D0D;
+  --color-border: #DDD9D0;
+  --color-ring: #C9A96E;
+  --radius: 0.25rem;
+
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body: 'Outfit', system-ui, sans-serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #FAF8F5;
+  color: #0D0D0D;
+  font-family: 'Outfit', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, .font-display {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+/* Hide scrollbars by default, show on hover/scroll */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #DDD9D0; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #C9A96E; }
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid #C9A96E;
+  outline-offset: 2px;
+}
+
+/* Smooth transitions */
+a, button { transition: all 0.2s ease; }
+
+/* Avatar silhouette animation */
+@keyframes pulse-outline {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+.avatar-silhouette {
+  animation: pulse-outline 2.5s ease-in-out infinite;
+}
+
+/* Marquee */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.marquee-track {
+  animation: marquee 20s linear infinite;
+}
+
+/* Page transition helper */
+.page-enter {
+  opacity: 0;
+  transform: translateY(16px);
+}

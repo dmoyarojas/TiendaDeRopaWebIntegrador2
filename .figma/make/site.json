@@ -1,0 +1,10 @@
+{
+  "description": "Explore a clothing store platform that allows users to create personalized avatars, try on outfits virtually, and enjoy a seamless shopping experience.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
