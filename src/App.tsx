@@ -23,6 +23,7 @@ interface CartItem extends Product {
 }
 
 interface UserMeasurements {
+  gender: 'F' | 'M'
   height: string
   weight: string
   chest: string
@@ -30,6 +31,44 @@ interface UserMeasurements {
   hips: string
   shoulder: string
   inseam: string
+}
+
+type UserRole = 'client' | 'admin'
+
+interface StoredUser {
+  name: string
+  email: string
+  password: string
+  role: UserRole
+  measurements: UserMeasurements
+}
+
+const USERS_STORAGE_KEY = 'velour-users'
+const SESSION_STORAGE_KEY = 'velour-session'
+const ADMIN_INVITATION_CODE = 'VELOUR-ADMIN'
+
+function getStoredUsers(): StoredUser[] {
+  try {
+    const users = JSON.parse(localStorage.getItem(USERS_STORAGE_KEY) || '[]')
+    return Array.isArray(users) ? users : []
+  } catch {
+    return []
+  }
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+function validateMeasurements(measurements: UserMeasurements) {
+  const ranges: Record<keyof Omit<UserMeasurements, 'gender'>, [number, number]> = {
+    height: [100, 250], weight: [25, 300], chest: [40, 200], waist: [40, 200],
+    hips: [40, 220], shoulder: [20, 100], inseam: [30, 150],
+  }
+  return Object.entries(ranges).find(([key, [min, max]]) => {
+    const value = Number(measurements[key as keyof typeof ranges])
+    return !Number.isFinite(value) || value < min || value > max
+  })?.[0]
 }
 
 // ─── Data ────────────────────────────────────────────────────────────────────
@@ -686,13 +725,33 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
 function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [role, setRole] = useState<UserRole>('client')
+  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const pageRef = useGsapEntrance([])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setError('')
+    if (!isValidEmail(email.trim())) {
+      setError('Ingresa un correo electrónico válido.')
+      return
+    }
+    if (password.length < 8) {
+      setError('La contraseña debe tener al menos 8 caracteres.')
+      return
+    }
+    const user = getStoredUsers().find(item => item.email === email.trim().toLowerCase() && item.role === role)
+    if (!user || user.password !== password) {
+      setError(`No existe una cuenta de ${role === 'admin' ? 'administrador' : 'cliente'} con esas credenciales.`)
+      return
+    }
     setLoading(true)
-    setTimeout(() => { setLoading(false); setPage('home') }, 1200)
+    setTimeout(() => {
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email: user.email, role: user.role }))
+      setLoading(false)
+      setPage(user.role === 'admin' ? 'home' : 'avatar')
+    }, 500)
   }
 
   return (
@@ -720,6 +779,17 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div>
+              <p className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Tipo de cuenta</p>
+              <div className="grid grid-cols-2 gap-3">
+                {(['client', 'admin'] as const).map(option => (
+                  <button key={option} type="button" onClick={() => setRole(option)}
+                    className={`py-3 text-sm font-600 border transition-colors ${role === option ? 'bg-[#0D0D0D] text-white border-[#0D0D0D]' : 'bg-white text-[#6B6860] border-[#DDD9D0]'}`}>
+                    {option === 'client' ? 'Cliente' : 'Administrador'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <label htmlFor="login-email" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Correo electrónico</label>
               <input
@@ -762,6 +832,7 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
             >
               {loading ? 'Ingresando...' : 'Ingresar'}
             </button>
+            {error && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2">{error}</p>}
           </form>
 
           <div className="mt-6 pt-6 border-t border-[#DDD9D0] text-center">
@@ -782,15 +853,22 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
 
 function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
   const [step, setStep] = useState(1)
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' })
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '', role: 'client' as UserRole, adminCode: '' })
+  const [measurements, setMeasurements] = useState<UserMeasurements>({ gender: 'F', height: '', weight: '', chest: '', waist: '', hips: '', shoulder: '', inseam: '' })
+  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const pageRef = useGsapEntrance([])
   const formRef = useRef<HTMLFormElement>(null)
 
   function update(k: keyof typeof form, v: string) { setForm(f => ({ ...f, [k]: v })) }
+  function updateMeasurement(k: keyof UserMeasurements, v: string) { setMeasurements(m => ({ ...m, [k]: v })) }
 
   function handleStep1(e: React.FormEvent) {
     e.preventDefault()
+    setError('')
+    if (form.name.trim().length < 2) return setError('Ingresa tu nombre completo.')
+    if (!isValidEmail(form.email.trim())) return setError('Ingresa un correo electrónico válido.')
+    if (form.role === 'admin' && form.adminCode !== ADMIN_INVITATION_CODE) return setError('El código de invitación de administrador no es válido.')
     if (formRef.current) {
       gsap.fromTo(formRef.current, { x: 0 }, { x: -20, opacity: 0, duration: 0.2, ease: 'power2.in', onComplete: () => {
         setStep(2)
@@ -803,12 +881,38 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
 
   function handleStep2(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
-    setTimeout(() => {
-      setLoading(false)
-      setPage('avatar')
-    }, 1200)
+    setError('')
+    if (form.password.length < 8) return setError('La contraseña debe tener al menos 8 caracteres.')
+    if (form.password !== form.confirm) return setError('Las contraseñas no coinciden.')
+    setStep(3)
   }
+
+  function handleStep3(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    const invalidMeasurement = validateMeasurements(measurements)
+    if (invalidMeasurement) return setError('Revisa las medidas: deben estar dentro de un rango válido y en las unidades indicadas.')
+    const email = form.email.trim().toLowerCase()
+    if (getStoredUsers().some(user => user.email === email)) return setError('Ya existe una cuenta con ese correo electrónico.')
+    setLoading(true)
+    const newUser: StoredUser = { ...form, email, name: form.name.trim(), measurements }
+    setTimeout(() => {
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify([...getStoredUsers(), newUser]))
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
+      setLoading(false)
+      setPage(form.role === 'admin' ? 'home' : 'avatar')
+    }, 500)
+  }
+
+  const measurementFields: { key: keyof Omit<UserMeasurements, 'gender'>; label: string; placeholder: string; unit: string }[] = [
+    { key: 'height', label: 'Estatura', placeholder: '165', unit: 'cm' },
+    { key: 'weight', label: 'Peso', placeholder: '60', unit: 'kg' },
+    { key: 'chest', label: 'Contorno de pecho', placeholder: '90', unit: 'cm' },
+    { key: 'waist', label: 'Contorno de cintura', placeholder: '70', unit: 'cm' },
+    { key: 'hips', label: 'Contorno de cadera', placeholder: '95', unit: 'cm' },
+    { key: 'shoulder', label: 'Ancho de hombros', placeholder: '38', unit: 'cm' },
+    { key: 'inseam', label: 'Largo de entrepierna', placeholder: '75', unit: 'cm' },
+  ]
 
   return (
     <div ref={pageRef} className="min-h-screen bg-[#FAF8F5] pt-16 flex">
@@ -828,13 +932,13 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
         <div className="w-full max-w-sm">
           {/* Progress */}
           <div className="flex items-center gap-2 mb-8">
-            {[1, 2].map(n => (
+            {[1, 2, 3].map(n => (
               <div key={n} className="flex items-center gap-2">
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-700 transition-all ${step >= n ? 'bg-[#C9A96E] text-[#0D0D0D]' : 'bg-[#DDD9D0] text-[#6B6860]'}`}>{n}</div>
-                {n < 2 && <div className={`h-px w-12 transition-all ${step > n ? 'bg-[#C9A96E]' : 'bg-[#DDD9D0]'}`} />}
+                {n < 3 && <div className={`h-px w-12 transition-all ${step > n ? 'bg-[#C9A96E]' : 'bg-[#DDD9D0]'}`} />}
               </div>
             ))}
-            <span className="ml-2 text-xs text-[#6B6860]">{step === 1 ? 'Datos básicos' : 'Contraseña'}</span>
+            <span className="ml-2 text-xs text-[#6B6860]">{step === 1 ? 'Datos básicos' : step === 2 ? 'Contraseña' : 'Medidas biométricas'}</span>
           </div>
 
           <div className="mb-8">
@@ -850,6 +954,17 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
                   className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
               </div>
               <div>
+                <p className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Tipo de cuenta</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['client', 'admin'] as const).map(option => (
+                    <button key={option} type="button" onClick={() => update('role', option)} className={`py-3 text-sm font-600 border transition-colors ${form.role === option ? 'bg-[#0D0D0D] text-white border-[#0D0D0D]' : 'bg-white text-[#6B6860] border-[#DDD9D0]'}`}>
+                      {option === 'client' ? 'Cliente' : 'Administrador'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {form.role === 'admin' && <div><label htmlFor="reg-admin-code" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Código de invitación</label><input id="reg-admin-code" type="password" value={form.adminCode} onChange={e => update('adminCode', e.target.value)} required className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white" /></div>}
+              <div>
                 <label htmlFor="reg-email" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Correo electrónico</label>
                 <input id="reg-email" type="email" value={form.email} onChange={e => update('email', e.target.value)} placeholder="tu@correo.com" required autoComplete="email"
                   className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
@@ -858,7 +973,7 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
                 Continuar
               </button>
             </form>
-          ) : (
+          ) : step === 2 ? (
             <form ref={formRef} onSubmit={handleStep2} className="space-y-4" noValidate>
               <div>
                 <label htmlFor="reg-password" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Contraseña</label>
@@ -875,13 +990,25 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
               </p>
               <button type="submit" disabled={loading}
                 className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50 mt-2">
-                {loading ? 'Creando cuenta...' : 'Crear cuenta y configurar avatar'}
+                Continuar a medidas
               </button>
               <button type="button" onClick={() => setStep(1)} className="w-full text-xs text-[#6B6860] hover:text-[#0D0D0D] transition-colors py-2">
                 ← Volver
               </button>
             </form>
+          ) : (
+            <form ref={formRef} onSubmit={handleStep3} className="space-y-4" noValidate>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2"><p className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Sexo</p><div className="grid grid-cols-2 gap-3">{(['F', 'M'] as const).map(g => <button key={g} type="button" onClick={() => updateMeasurement('gender', g)} className={`py-3 text-sm font-600 border ${measurements.gender === g ? 'bg-[#0D0D0D] text-white border-[#0D0D0D]' : 'bg-white text-[#6B6860] border-[#DDD9D0]'}`}>{g === 'F' ? 'Femenino' : 'Masculino'}</button>)}</div></div>
+                {measurementFields.map(field => <div key={field.key}><label htmlFor={`reg-${field.key}`} className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">{field.label}</label><div className="relative"><input id={`reg-${field.key}`} type="number" min="0" step="0.1" value={measurements[field.key]} onChange={e => updateMeasurement(field.key, e.target.value)} placeholder={field.placeholder} required className="w-full px-3 py-3 pr-10 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6860] text-xs">{field.unit}</span></div></div>)}
+              </div>
+              <p className="text-xs text-[#6B6860]">Tus datos biométricos se guardan junto a tu perfil para recomendarte tallas.</p>
+              <button type="submit" disabled={loading} className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50">{loading ? 'Creando cuenta...' : 'Crear cuenta'}</button>
+              <button type="button" onClick={() => setStep(2)} className="w-full text-xs text-[#6B6860] hover:text-[#0D0D0D] transition-colors py-2">← Volver</button>
+            </form>
           )}
+
+          {error && <p role="alert" className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2">{error}</p>}
 
           <div className="mt-6 pt-6 border-t border-[#DDD9D0] text-center">
             <p className="text-sm text-[#6B6860]">
@@ -901,7 +1028,7 @@ function AvatarPage({ setPage }: { setPage: (p: Page) => void }) {
   const [step, setStep] = useState<'form' | 'generating' | 'done'>('form')
   const [gender, setGender] = useState<'F' | 'M'>('F')
   const [measurements, setMeasurements] = useState<UserMeasurements>({
-    height: '', weight: '', chest: '', waist: '', hips: '', shoulder: '', inseam: ''
+    gender: 'F', height: '', weight: '', chest: '', waist: '', hips: '', shoulder: '', inseam: ''
   })
   const avatarRef = useRef<SVGSVGElement>(null)
   const pageRef = useGsapEntrance([])
