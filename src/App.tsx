@@ -6,7 +6,7 @@ gsap.registerPlugin(ScrollTrigger)
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'avatar' | 'tryon' | 'checkout'
+type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'avatar' | 'tryon' | 'checkout' | 'admin' | 'forgot-password'
 
 interface Product {
   id: number
@@ -750,7 +750,7 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
     setTimeout(() => {
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email: user.email, role: user.role }))
       setLoading(false)
-      setPage(user.role === 'admin' ? 'home' : 'avatar')
+      setPage(user.role === 'admin' ? 'admin' : 'avatar')
     }, 500)
   }
 
@@ -822,7 +822,9 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
                 <input type="checkbox" className="accent-[#C9A96E]" />
                 <span className="text-[#6B6860]">Recordarme</span>
               </label>
-              <a href="#" className="text-[#C9A96E] hover:underline">¿Olvidaste tu contraseña?</a>
+              <button type="button" onClick={() => setPage('forgot-password')} className="text-[#C9A96E] hover:underline text-left">
+                ¿Olvidaste tu contraseña?
+              </button>
             </div>
 
             <button
@@ -900,7 +902,7 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
       localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify([...getStoredUsers(), newUser]))
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
       setLoading(false)
-      setPage(form.role === 'admin' ? 'home' : 'avatar')
+      setPage(form.role === 'admin' ? 'admin' : 'avatar')
     }, 500)
   }
 
@@ -2174,6 +2176,443 @@ function ConfirmStep({ orderNum, total, cart, onSuccess }: { orderNum: string; t
   )
 }
 
+// ─── Admin Dashboard ────────────────────────────────────────────────────────
+
+type AdminTab = 'dashboard' | 'orders' | 'products' | 'clients' | 'returns'
+
+function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
+  const [activeTab, setActiveTab] = useState<AdminTab>('dashboard')
+
+  const handleLogout = () => {
+    localStorage.removeItem(SESSION_STORAGE_KEY)
+    setPage('login')
+  }
+
+  const tabs: { key: AdminTab; label: string; icon: string }[] = [
+    { key: 'dashboard', label: 'Dashboard', icon: '▣' },
+    { key: 'orders', label: 'Pedidos', icon: '◫' },
+    { key: 'products', label: 'Productos', icon: '◧' },
+    { key: 'clients', label: 'Clientes', icon: '◉' },
+    { key: 'returns', label: 'Devoluciones', icon: '↺' },
+  ]
+
+  const stats = [
+    { label: 'Ingresos del mes', value: '$4.280.000', delta: '+18.4%', tone: 'amber' },
+    { label: 'Pedidos totales', value: '1.284', delta: '+9.2%', tone: 'slate' },
+    { label: 'Devoluciones', value: '43', delta: '-3.1%', tone: 'rose' },
+  ]
+
+  const orderRows = [
+    { order: '#1048', customer: 'María López', date: '12 Ago 2026', total: '$485.000', status: 'Enviado' },
+    { order: '#1049', customer: 'Carlos Ruiz', date: '12 Ago 2026', total: '$320.000', status: 'En preparación' },
+    { order: '#1050', customer: 'Sofía Díaz', date: '11 Ago 2026', total: '$620.000', status: 'Entregado' },
+    { order: '#1051', customer: 'Daniel Pérez', date: '10 Ago 2026', total: '$240.000', status: 'Cancelado' },
+  ]
+
+  const productRows = [
+    { product: 'Blazer Estructurado', category: 'Blazers', price: '$189.000', tag: 'Nuevo', actions: 'Añadir' },
+    { product: 'Gabardina Clásica', category: 'Abrigos', price: '$245.000', tag: 'Top', actions: 'Eliminar' },
+    { product: 'Vestido Minimalista', category: 'Vestidos', price: '$134.000', tag: 'Popular', actions: 'Añadir' },
+  ]
+
+  const clientRows = [
+    { client: 'Ana García', email: 'ana@correo.com', orders: 12, total: '$2.480.000', since: 'Feb 2025', actions: 'Ver' },
+    { client: 'Mateo Rojas', email: 'mateo@correo.com', orders: 8, total: '$1.790.000', since: 'Abr 2025', actions: 'Ver' },
+    { client: 'Valentina Cruz', email: 'vale@correo.com', orders: 15, total: '$3.220.000', since: 'Dic 2024', actions: 'Ver' },
+  ]
+
+  const returnRows = [
+    { code: 'DEV-2041', order: '#1042', client: 'Laura Silva', product: 'Chaqueta Oversized', reason: 'Talla incorrecta', date: '13 Ago 2026', status: 'En revisión', action: 'Aprobar' },
+    { code: 'DEV-2042', order: '#1036', client: 'Julián Gómez', product: 'Pantalón Wide Leg', reason: 'Defecto de material', date: '12 Ago 2026', status: 'Aprobado', action: 'Rechazar' },
+    { code: 'DEV-2043', order: '#1028', client: 'Camila Torres', product: 'Vestido Fluido', reason: 'Cambio de opinión', date: '11 Ago 2026', status: 'Pendiente', action: 'Aprobar' },
+  ]
+
+  const sales = [48, 64, 58, 82, 96, 78, 110, 125, 116, 88, 132, 146]
+
+  const getStatusClasses = (status: string) => {
+    switch (status) {
+      case 'Enviado':
+        return 'bg-sky-100 text-sky-700'
+      case 'En preparación':
+        return 'bg-amber-100 text-amber-700'
+      case 'Entregado':
+        return 'bg-emerald-100 text-emerald-700'
+      case 'Cancelado':
+        return 'bg-rose-100 text-rose-700'
+      case 'Aprobado':
+        return 'bg-emerald-100 text-emerald-700'
+      case 'En revisión':
+        return 'bg-violet-100 text-violet-700'
+      case 'Pendiente':
+        return 'bg-amber-100 text-amber-700'
+      default:
+        return 'bg-slate-100 text-slate-700'
+    }
+  }
+
+  const renderDashboard = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Resumen</p>
+          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Dashboard</h1>
+        </div>
+        <button className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
+          Exportar
+        </button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {stats.map(stat => (
+          <div key={stat.label} className="bg-white border border-[#E6E1D8] p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm text-[#6B6860]">{stat.label}</span>
+              <span className={`px-2 py-1 text-[10px] font-700 rounded-full ${stat.tone === 'amber' ? 'bg-amber-100 text-amber-700' : stat.tone === 'slate' ? 'bg-slate-200 text-slate-700' : 'bg-rose-100 text-rose-700'}`}>
+                {stat.delta}
+              </span>
+            </div>
+            <div className="text-3xl font-display text-[#0D0D0D]">{stat.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white border border-[#E6E1D8] p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#6B6860]">Ventas mensuales</p>
+            <h2 className="font-display text-2xl text-[#0D0D0D] mt-1">Ventas</h2>
+          </div>
+          <span className="text-sm text-[#6B6860]">2026</span>
+        </div>
+
+        <div className="flex items-end gap-3 h-56">
+          {sales.map((value, index) => (
+            <div key={index} className="flex-1 flex flex-col items-center gap-2">
+              <div className="w-full flex items-end justify-center h-40">
+                <div
+                  className="w-full max-w-8 rounded-t-md bg-gradient-to-t from-[#0D0D0D] to-[#C9A96E]"
+                  style={{ height: `${value}%` }}
+                />
+              </div>
+              <span className="text-[10px] uppercase text-[#6B6860]">{['E','F','M','A','M','J','J','A','S','O','N','D'][index]}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderOrders = () => (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Operaciones</p>
+          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Pedidos recientes</h1>
+        </div>
+        <button className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase tracking-wide text-[#0D0D0D] hover:border-[#0D0D0D] transition-colors">
+          Ver todos
+        </button>
+      </div>
+
+      <div className="bg-white border border-[#E6E1D8] overflow-hidden">
+        <table className="min-w-full text-left">
+          <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-4 py-3 font-600">Orden</th>
+              <th className="px-4 py-3 font-600">Cliente</th>
+              <th className="px-4 py-3 font-600">Fecha</th>
+              <th className="px-4 py-3 font-600">Total</th>
+              <th className="px-4 py-3 font-600">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orderRows.map(row => (
+              <tr key={row.order} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+                <td className="px-4 py-3 font-600">{row.order}</td>
+                <td className="px-4 py-3">{row.customer}</td>
+                <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
+                <td className="px-4 py-3 font-600">{row.total}</td>
+                <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(row.status)}`}>{row.status}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  const renderProducts = () => (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Catálogo</p>
+          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Productos</h1>
+        </div>
+        <button className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
+          Añadir producto
+        </button>
+      </div>
+
+      <div className="bg-white border border-[#E6E1D8] overflow-hidden">
+        <table className="min-w-full text-left">
+          <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-4 py-3 font-600">Producto</th>
+              <th className="px-4 py-3 font-600">Categoría</th>
+              <th className="px-4 py-3 font-600">Precio</th>
+              <th className="px-4 py-3 font-600">Etiqueta</th>
+              <th className="px-4 py-3 font-600">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {productRows.map(row => (
+              <tr key={row.product} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+                <td className="px-4 py-3 font-600">{row.product}</td>
+                <td className="px-4 py-3">{row.category}</td>
+                <td className="px-4 py-3">{row.price}</td>
+                <td className="px-4 py-3"><span className="inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full bg-[#F2EFE9] text-[#0D0D0D]">{row.tag}</span></td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2">
+                    <button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">{row.actions === 'Añadir' ? 'Añadir' : 'Eliminar'}</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  const renderClients = () => (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">CRM</p>
+          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Clientes</h1>
+        </div>
+        <button className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase tracking-wide text-[#0D0D0D] hover:border-[#0D0D0D] transition-colors">
+          Exportar</button>
+      </div>
+
+      <div className="bg-white border border-[#E6E1D8] overflow-hidden">
+        <table className="min-w-full text-left">
+          <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-4 py-3 font-600">Cliente</th>
+              <th className="px-4 py-3 font-600">Email</th>
+              <th className="px-4 py-3 font-600">Pedidos</th>
+              <th className="px-4 py-3 font-600">Total gastado</th>
+              <th className="px-4 py-3 font-600">Miembro desde</th>
+              <th className="px-4 py-3 font-600">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {clientRows.map(row => (
+              <tr key={row.email} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+                <td className="px-4 py-3 font-600">{row.client}</td>
+                <td className="px-4 py-3 text-[#6B6860]">{row.email}</td>
+                <td className="px-4 py-3">{row.orders}</td>
+                <td className="px-4 py-3">{row.total}</td>
+                <td className="px-4 py-3">{row.since}</td>
+                <td className="px-4 py-3"><button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">{row.actions}</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  const renderReturns = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Servicio</p>
+          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Devoluciones</h1>
+        </div>
+        <button className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
+          Nueva solicitud
+        </button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {[
+          { label: 'Total solicitudes', value: '128', detail: '+12% vs mes pasado' },
+          { label: 'Pendientes', value: '24', detail: 'Requieren revisión' },
+          { label: 'Aprobadas', value: '94', detail: 'Procesadas hoy' },
+        ].map(stat => (
+          <div key={stat.label} className="bg-white border border-[#E6E1D8] p-5 shadow-sm">
+            <p className="text-sm text-[#6B6860]">{stat.label}</p>
+            <div className="text-3xl font-display text-[#0D0D0D] mt-2">{stat.value}</div>
+            <p className="text-xs text-[#6B6860] mt-2">{stat.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white border border-[#E6E1D8] overflow-hidden">
+        <table className="min-w-full text-left">
+          <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
+            <tr>
+              <th className="px-4 py-3 font-600">Código devolución</th>
+              <th className="px-4 py-3 font-600">Orden</th>
+              <th className="px-4 py-3 font-600">Cliente</th>
+              <th className="px-4 py-3 font-600">Producto</th>
+              <th className="px-4 py-3 font-600">Motivo</th>
+              <th className="px-4 py-3 font-600">Fecha</th>
+              <th className="px-4 py-3 font-600">Estado</th>
+              <th className="px-4 py-3 font-600">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {returnRows.map(row => (
+              <tr key={row.code} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D] align-top">
+                <td className="px-4 py-3 font-600">{row.code}</td>
+                <td className="px-4 py-3">{row.order}</td>
+                <td className="px-4 py-3">{row.client}</td>
+                <td className="px-4 py-3">{row.product}</td>
+                <td className="px-4 py-3 text-[#6B6860]">{row.reason}</td>
+                <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
+                <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(row.status)}`}>{row.status}</span></td>
+                <td className="px-4 py-3"><button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">{row.action}</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="min-h-screen bg-[#F5F1ED] pt-16 flex">
+      <aside className="w-72 bg-[#0D0D0D] text-white flex-shrink-0 flex flex-col justify-between">
+        <div>
+          <div className="p-6 border-b border-white/10">
+            <div className="font-display text-2xl tracking-tight">VELOUR</div>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#C9A96E] mt-2">Administración</p>
+          </div>
+
+          <nav className="p-4 space-y-2">
+            {tabs.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`w-full flex items-center gap-3 px-3 py-3 text-left rounded-md transition-colors ${activeTab === tab.key ? 'bg-[#C9A96E] text-[#0D0D0D]' : 'text-white/80 hover:bg-white/5 hover:text-white'}`}
+              >
+                <span className="text-base">{tab.icon}</span>
+                <span className="text-sm font-600">{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="p-4 border-t border-white/10 space-y-2">
+          <button
+            type="button"
+            onClick={() => setPage('home')}
+            className="w-full text-left px-3 py-2 text-sm font-600 text-white/80 hover:text-white hover:bg-white/5 transition-colors"
+          >
+            ← Volver a la página principal
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full text-left px-3 py-2 text-sm font-600 text-red-300 hover:text-red-100 hover:bg-white/5 transition-colors"
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </aside>
+
+      <main className="flex-1 p-6 md:p-8">
+        {activeTab === 'dashboard' && renderDashboard()}
+        {activeTab === 'orders' && renderOrders()}
+        {activeTab === 'products' && renderProducts()}
+        {activeTab === 'clients' && renderClients()}
+        {activeTab === 'returns' && renderReturns()}
+      </main>
+    </div>
+  )
+}
+
+// ─── Forgot Password Page ───────────────────────────────────────────────────
+
+function ForgotPasswordPage({ setPage }: { setPage: (p: Page) => void }) {
+  const [email, setEmail] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const pageRef = useGsapEntrance([])
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!isValidEmail(email.trim())) return
+    setSubmitted(true)
+  }
+
+  return (
+    <div ref={pageRef} className="min-h-screen bg-[#FAF8F5] pt-16 flex">
+      <div className="hidden lg:flex lg:w-1/2 bg-[#0D0D0D] relative overflow-hidden">
+        <img
+          src="https://images.unsplash.com/photo-1529139574466-a303027c1d8b?w=800&h=1000&fit=crop&auto=format"
+          alt="Moda VELOUR"
+          className="absolute inset-0 w-full h-full object-cover opacity-60"
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#0D0D0D]/65 to-transparent" />
+        <div className="relative z-10 p-12 flex flex-col justify-end">
+          <span className="font-display text-white text-3xl font-700">VELOUR</span>
+          <p className="text-white/60 text-sm mt-2">Recupera tu acceso a tu cuenta</p>
+        </div>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center px-4 sm:px-8 py-12">
+        <div className="w-full max-w-md">
+          <div className="mb-8">
+            <p className="text-[#C9A96E] text-xs font-600 tracking-[0.3em] uppercase mb-2">Seguridad</p>
+            <h1 className="font-display text-3xl font-700 text-[#0D0D0D]">¿Olvidaste tu contraseña?</h1>
+          </div>
+
+          {!submitted ? (
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+              <div>
+                <label htmlFor="forgot-email" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Correo electrónico</label>
+                <input
+                  id="forgot-email"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="tu@correo.com"
+                  required
+                  className="w-full px-4 py-3 border border-[#DDD9D0] text-sm text-[#0D0D0D] placeholder-[#6B6860]/50 focus:border-[#C9A96E] focus:outline-none bg-white transition-colors"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors"
+              >
+                Enviar enlace
+              </button>
+            </form>
+          ) : (
+            <div className="border border-[#DDD9D0] bg-white p-6">
+              <p className="text-sm text-[#6B6860] mb-3">Hemos enviado un enlace de recuperación a:</p>
+              <p className="font-600 text-[#0D0D0D] break-all">{email}</p>
+              <p className="mt-5 text-sm text-[#6B6860] leading-relaxed">
+                Revisa tu correo y sigue las instrucciones para restablecer tu contraseña.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-6 pt-6 border-t border-[#DDD9D0] text-center">
+            <button onClick={() => setPage('login')} className="text-[#0D0D0D] font-600 hover:text-[#C9A96E] transition-colors">
+              ← Volver a iniciar sesión
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── App Root ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -2199,7 +2638,7 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [page])
 
-  const hideNav = page === 'checkout'
+  const hideNav = page === 'checkout' || page === 'admin'
 
   return (
     <>
@@ -2211,9 +2650,11 @@ export default function App() {
         {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={setPage} onCheckout={() => setPage('checkout')} />}
         {page === 'login' && <LoginPage setPage={setPage} />}
         {page === 'register' && <RegisterPage setPage={setPage} />}
+        {page === 'forgot-password' && <ForgotPasswordPage setPage={setPage} />}
         {page === 'avatar' && <AvatarPage setPage={setPage} />}
         {page === 'tryon' && <TryOnPage setPage={setPage} />}
         {page === 'checkout' && <CheckoutPage cart={cart} onSuccess={handleCheckoutSuccess} />}
+        {page === 'admin' && <AdminDashboardPage setPage={setPage} />}
       </main>
 
       <WhatsAppFAB />
