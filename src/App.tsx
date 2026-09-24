@@ -43,6 +43,17 @@ interface StoredUser {
   measurements: UserMeasurements
 }
 
+const DEFAULT_MEASUREMENTS: UserMeasurements = {
+  gender: 'F',
+  height: '',
+  weight: '',
+  chest: '',
+  waist: '',
+  hips: '',
+  shoulder: '',
+  inseam: '',
+}
+
 const USERS_STORAGE_KEY = 'velour-users'
 const SESSION_STORAGE_KEY = 'velour-session'
 const ADMIN_INVITATION_CODE = 'VELOUR-ADMIN'
@@ -856,7 +867,7 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
 function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '', role: 'client' as UserRole, adminCode: '' })
-  const [measurements, setMeasurements] = useState<UserMeasurements>({ gender: 'F', height: '', weight: '', chest: '', waist: '', hips: '', shoulder: '', inseam: '' })
+  const [measurements, setMeasurements] = useState<UserMeasurements>(DEFAULT_MEASUREMENTS)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const pageRef = useGsapEntrance([])
@@ -864,6 +875,26 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
 
   function update(k: keyof typeof form, v: string) { setForm(f => ({ ...f, [k]: v })) }
   function updateMeasurement(k: keyof UserMeasurements, v: string) { setMeasurements(m => ({ ...m, [k]: v })) }
+
+  function submitAccount() {
+    const email = form.email.trim().toLowerCase()
+    if (getStoredUsers().some(user => user.email === email)) return setError('Ya existe una cuenta con ese correo electrónico.')
+
+    const newUser: StoredUser = {
+      ...form,
+      email,
+      name: form.name.trim(),
+      measurements: form.role === 'admin' ? DEFAULT_MEASUREMENTS : measurements,
+    }
+
+    setLoading(true)
+    setTimeout(() => {
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify([...getStoredUsers(), newUser]))
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
+      setLoading(false)
+      setPage(form.role === 'admin' ? 'admin' : 'avatar')
+    }, 500)
+  }
 
   function handleStep1(e: React.FormEvent) {
     e.preventDefault()
@@ -886,6 +917,12 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
     setError('')
     if (form.password.length < 8) return setError('La contraseña debe tener al menos 8 caracteres.')
     if (form.password !== form.confirm) return setError('Las contraseñas no coinciden.')
+
+    if (form.role === 'admin') {
+      submitAccount()
+      return
+    }
+
     setStep(3)
   }
 
@@ -894,16 +931,7 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
     setError('')
     const invalidMeasurement = validateMeasurements(measurements)
     if (invalidMeasurement) return setError('Revisa las medidas: deben estar dentro de un rango válido y en las unidades indicadas.')
-    const email = form.email.trim().toLowerCase()
-    if (getStoredUsers().some(user => user.email === email)) return setError('Ya existe una cuenta con ese correo electrónico.')
-    setLoading(true)
-    const newUser: StoredUser = { ...form, email, name: form.name.trim(), measurements }
-    setTimeout(() => {
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify([...getStoredUsers(), newUser]))
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
-      setLoading(false)
-      setPage(form.role === 'admin' ? 'admin' : 'avatar')
-    }, 500)
+    submitAccount()
   }
 
   const measurementFields: { key: keyof Omit<UserMeasurements, 'gender'>; label: string; placeholder: string; unit: string }[] = [
@@ -987,12 +1015,15 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
                 <input id="reg-confirm" type="password" value={form.confirm} onChange={e => update('confirm', e.target.value)} placeholder="Repite tu contraseña" required autoComplete="new-password"
                   className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
               </div>
+              {form.role === 'admin' && (
+                <p className="text-xs text-[#6B6860]">La cuenta de administrador entra directamente al panel sin crear avatar ni registrar medidas.</p>
+              )}
               <p className="text-xs text-[#6B6860]">
                 Al crear tu cuenta aceptas nuestros <a href="#" className="text-[#C9A96E] hover:underline">Términos de uso</a> y <a href="#" className="text-[#C9A96E] hover:underline">Política de privacidad</a>.
               </p>
               <button type="submit" disabled={loading}
                 className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50 mt-2">
-                Continuar a medidas
+                {form.role === 'admin' ? 'Crear cuenta' : 'Continuar a medidas'}
               </button>
               <button type="button" onClick={() => setStep(1)} className="w-full text-xs text-[#6B6860] hover:text-[#0D0D0D] transition-colors py-2">
                 ← Volver
@@ -2222,10 +2253,55 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
   ]
 
   const returnRows = [
-    { code: 'DEV-2041', order: '#1042', client: 'Laura Silva', product: 'Chaqueta Oversized', reason: 'Talla incorrecta', date: '13 Ago 2026', status: 'En revisión', action: 'Aprobar' },
-    { code: 'DEV-2042', order: '#1036', client: 'Julián Gómez', product: 'Pantalón Wide Leg', reason: 'Defecto de material', date: '12 Ago 2026', status: 'Aprobado', action: 'Rechazar' },
-    { code: 'DEV-2043', order: '#1028', client: 'Camila Torres', product: 'Vestido Fluido', reason: 'Cambio de opinión', date: '11 Ago 2026', status: 'Pendiente', action: 'Aprobar' },
+    {
+      code: 'DEV-2041',
+      order: '#1042',
+      client: 'Laura Silva',
+      email: 'laura.silva@email.com',
+      phone: '+57 310 456 7890',
+      address: 'Cra. 8 #120-45, Bogotá',
+      product: 'Chaqueta Oversized',
+      productImage: 'https://images.unsplash.com/photo-1555529771-835f59fc5efe?w=800&h=1000&fit=crop&auto=format',
+      reason: 'Talla incorrecta',
+      details: 'El cliente solicitó cambio por talla más pequeña; la prenda llegó sin etiquetas y con la caja cerrada.',
+      date: '13 Ago 2026',
+      status: 'En revisión',
+      action: 'Aprobar',
+    },
+    {
+      code: 'DEV-2042',
+      order: '#1036',
+      client: 'Julián Gómez',
+      email: 'julian.gomez@email.com',
+      phone: '+57 315 222 4411',
+      address: 'Cl. 80 #23-90, Medellín',
+      product: 'Pantalón Wide Leg',
+      productImage: 'https://images.unsplash.com/photo-1540221652346-e5dd6b50f3e7?w=800&h=1000&fit=crop&auto=format',
+      reason: 'Defecto de material',
+      details: 'Se reportó que la tela presenta rotura en la costura lateral. Se adjuntó evidencia fotográfica del defecto.',
+      date: '12 Ago 2026',
+      status: 'Aprobado',
+      action: 'Rechazar',
+    },
+    {
+      code: 'DEV-2043',
+      order: '#1028',
+      client: 'Camila Torres',
+      email: 'camila.torres@email.com',
+      phone: '+57 300 760 9912',
+      address: 'Av. 68 #50-35, Cali',
+      product: 'Vestido Fluido',
+      productImage: 'https://images.unsplash.com/photo-1549570652-97324981a6fd?w=800&h=1000&fit=crop&auto=format',
+      reason: 'Cambio de opinión',
+      details: 'La clienta desea devolver el producto por cambio de preferencia; adjuntó imágenes del vestido en perfecto estado.',
+      date: '11 Ago 2026',
+      status: 'Pendiente',
+      action: 'Aprobar',
+    },
   ]
+
+  const [selectedReturnCode, setSelectedReturnCode] = useState(returnRows[0].code)
+  const selectedReturn = returnRows.find(row => row.code === selectedReturnCode) ?? returnRows[0]
 
   const sales = [48, 64, 58, 82, 96, 78, 110, 125, 116, 88, 132, 146]
 
@@ -2466,7 +2542,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
           </thead>
           <tbody>
             {returnRows.map(row => (
-              <tr key={row.code} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D] align-top">
+              <tr key={row.code} className={`border-t border-[#EEE8E1] text-sm text-[#0D0D0D] align-top ${selectedReturnCode === row.code ? 'bg-[#FAF8F5]' : ''}`}>
                 <td className="px-4 py-3 font-600">{row.code}</td>
                 <td className="px-4 py-3">{row.order}</td>
                 <td className="px-4 py-3">{row.client}</td>
@@ -2474,11 +2550,81 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
                 <td className="px-4 py-3 text-[#6B6860]">{row.reason}</td>
                 <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
                 <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(row.status)}`}>{row.status}</span></td>
-                <td className="px-4 py-3"><button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">{row.action}</button></td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col gap-2">
+                    <button onClick={() => setSelectedReturnCode(row.code)} className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E] text-left">
+                      Ver detalles
+                    </button>
+                    <button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E] text-left">{row.action}</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="bg-[#FAF8F5] border border-[#E6E1D8] p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Detalle</p>
+            <h2 className="font-display text-2xl text-[#0D0D0D] mt-1">Solicitud {selectedReturn.code}</h2>
+          </div>
+          <span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(selectedReturn.status)}`}>{selectedReturn.status}</span>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-4 text-sm text-[#0D0D0D]">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Cliente</p>
+                <p className="font-600">{selectedReturn.client}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Orden</p>
+                <p className="font-600">{selectedReturn.order}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Correo</p>
+                <p>{selectedReturn.email}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Teléfono</p>
+                <p>{selectedReturn.phone}</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Dirección</p>
+              <p>{selectedReturn.address}</p>
+            </div>
+
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Producto</p>
+              <p className="font-600">{selectedReturn.product}</p>
+            </div>
+
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Motivo de devolución</p>
+              <p className="font-600">{selectedReturn.reason}</p>
+            </div>
+
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Información del cliente</p>
+              <p className="text-[#6B6860] leading-relaxed">{selectedReturn.details}</p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[#DDD9D0] bg-white p-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-2">Imagen adjunta</p>
+            <img
+              src={selectedReturn.productImage}
+              alt={`Producto de la devolución ${selectedReturn.product}`}
+              className="w-full h-72 object-cover rounded-md border border-[#E6E1D8]"
+            />
+            <p className="text-xs text-[#6B6860] mt-3">Evidencia enviada por el cliente con su información y la foto del producto.</p>
+          </div>
+        </div>
       </div>
     </div>
   )
