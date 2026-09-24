@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
+import { supabase } from './lib/supabase'
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -2214,6 +2215,56 @@ type AdminTab = 'dashboard' | 'orders' | 'products' | 'clients' | 'returns'
 function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard')
 
+  // States for DB data
+  const [dbOrders, setDbOrders] = useState<any[]>([])
+  const [dbProducts, setDbProducts] = useState<any[]>([])
+  const [dbClients, setDbClients] = useState<any[]>([])
+  const [dbReturns, setDbReturns] = useState<any[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchData() {
+      setIsLoading(true)
+      try {
+        // Fetch orders joined with profiles
+        const { data: ordersData } = await supabase
+          .from('pedidos')
+          .select('id, monto_total, estado, creado_el, perfiles(nombre, apellido)')
+          .order('creado_el', { ascending: false })
+          
+        if (ordersData) setDbOrders(ordersData)
+
+        // Fetch products joined with categories
+        const { data: productsData } = await supabase
+          .from('productos')
+          .select('id, nombre, precio_base, etiqueta, categorias(nombre)')
+          
+        if (productsData) setDbProducts(productsData)
+
+        // Fetch clients with their orders
+        const { data: clientsData } = await supabase
+          .from('perfiles')
+          .select('id, nombre, apellido, correo, creado_el, pedidos(monto_total)')
+          
+        if (clientsData) setDbClients(clientsData)
+
+        // Fetch returns
+        const { data: returnsData } = await supabase
+          .from('devoluciones')
+          .select('id, codigo_devolucion, pedido_id, motivo, estado, creado_el, perfiles(nombre, apellido), variantes_producto(productos(nombre))')
+          .order('creado_el', { ascending: false })
+
+        if (returnsData) setDbReturns(returnsData)
+      } catch (error) {
+        console.error('Error fetching data:', error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    
+    fetchData()
+  }, [])
+
   const handleLogout = () => {
     localStorage.removeItem(SESSION_STORAGE_KEY)
     setPage('login')
@@ -2227,30 +2278,41 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     { key: 'returns', label: 'Devoluciones', icon: '↺' },
   ]
 
+  const totalIngresos = dbOrders.reduce((sum, order) => sum + Number(order.monto_total), 0)
   const stats = [
-    { label: 'Ingresos del mes', value: '$4.280.000', delta: '+18.4%', tone: 'amber' },
-    { label: 'Pedidos totales', value: '1.284', delta: '+9.2%', tone: 'slate' },
-    { label: 'Devoluciones', value: '43', delta: '-3.1%', tone: 'rose' },
+    { label: 'Ingresos totales', value: formatPrice(totalIngresos), delta: 'N/A', tone: 'amber' },
+    { label: 'Pedidos totales', value: dbOrders.length.toString(), delta: 'N/A', tone: 'slate' },
+    { label: 'Devoluciones', value: dbReturns.length.toString(), delta: 'N/A', tone: 'rose' },
   ]
 
-  const orderRows = [
-    { order: '#1048', customer: 'María López', date: '12 Ago 2026', total: '$485.000', status: 'Enviado' },
-    { order: '#1049', customer: 'Carlos Ruiz', date: '12 Ago 2026', total: '$320.000', status: 'En preparación' },
-    { order: '#1050', customer: 'Sofía Díaz', date: '11 Ago 2026', total: '$620.000', status: 'Entregado' },
-    { order: '#1051', customer: 'Daniel Pérez', date: '10 Ago 2026', total: '$240.000', status: 'Cancelado' },
-  ]
+  const orderRows = dbOrders.map(order => ({
+    order: order.id.substring(0, 8),
+    customer: order.perfiles ? `${order.perfiles.nombre || ''} ${order.perfiles.apellido || ''}`.trim() : 'Desconocido',
+    date: new Date(order.creado_el).toLocaleDateString('es-CO'),
+    total: formatPrice(Number(order.monto_total)),
+    status: order.estado ? order.estado.charAt(0).toUpperCase() + order.estado.slice(1) : 'Desconocido'
+  }))
 
-  const productRows = [
-    { product: 'Blazer Estructurado', category: 'Blazers', price: '$189.000', tag: 'Nuevo', actions: 'Añadir' },
-    { product: 'Gabardina Clásica', category: 'Abrigos', price: '$245.000', tag: 'Top', actions: 'Eliminar' },
-    { product: 'Vestido Minimalista', category: 'Vestidos', price: '$134.000', tag: 'Popular', actions: 'Añadir' },
-  ]
+  const productRows = dbProducts.map(prod => ({
+    product: prod.nombre,
+    category: prod.categorias ? prod.categorias.nombre : 'Sin categoría',
+    price: formatPrice(Number(prod.precio_base)),
+    tag: prod.etiqueta || 'Base',
+    actions: 'Ver'
+  }))
 
-  const clientRows = [
-    { client: 'Ana García', email: 'ana@correo.com', orders: 12, total: '$2.480.000', since: 'Feb 2025', actions: 'Ver' },
-    { client: 'Mateo Rojas', email: 'mateo@correo.com', orders: 8, total: '$1.790.000', since: 'Abr 2025', actions: 'Ver' },
-    { client: 'Valentina Cruz', email: 'vale@correo.com', orders: 15, total: '$3.220.000', since: 'Dic 2024', actions: 'Ver' },
-  ]
+  const clientRows = dbClients.map(client => {
+    const ordersCount = client.pedidos ? client.pedidos.length : 0;
+    const totalSpent = client.pedidos ? client.pedidos.reduce((sum: number, p: any) => sum + Number(p.monto_total), 0) : 0;
+    return {
+      client: `${client.nombre || ''} ${client.apellido || ''}`.trim() || 'Desconocido',
+      email: client.correo,
+      orders: ordersCount,
+      total: formatPrice(totalSpent),
+      since: new Date(client.creado_el).toLocaleDateString('es-CO'),
+      actions: 'Ver'
+    }
+  })
 
   const returnRows = [
     {
@@ -2299,6 +2361,16 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       action: 'Aprobar',
     },
   ]
+  const returnRows = dbReturns.map(ret => ({
+    code: ret.codigo_devolucion,
+    order: ret.pedido_id ? ret.pedido_id.substring(0, 8) : '',
+    client: ret.perfiles ? `${ret.perfiles.nombre || ''} ${ret.perfiles.apellido || ''}`.trim() : 'Desconocido',
+    product: ret.variantes_producto?.productos?.nombre || 'Producto desconocido',
+    reason: ret.motivo,
+    date: new Date(ret.creado_el).toLocaleDateString('es-CO'),
+    status: ret.estado ? ret.estado.charAt(0).toUpperCase() + ret.estado.slice(1) : 'Desconocido',
+    action: 'Ver'
+  }))
 
   const [selectedReturnCode, setSelectedReturnCode] = useState(returnRows[0].code)
   const selectedReturn = returnRows.find(row => row.code === selectedReturnCode) ?? returnRows[0]
@@ -2326,51 +2398,64 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     }
   }
 
+  const renderTableEmptyState = (message: string) => (
+    <div className="py-20 flex flex-col items-center justify-center text-center">
+      <div className="w-16 h-16 bg-[#F2EFE9] rounded-full flex items-center justify-center mb-4">
+        <svg width="24" height="24" fill="none" stroke="#6B6860" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+      </div>
+      <p className="text-[#0D0D0D] font-display text-xl">{message}</p>
+      <p className="text-[#6B6860] text-sm mt-2">Los datos aparecerán aquí cuando estén disponibles.</p>
+    </div>
+  )
+
   const renderDashboard = () => (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-8 animate-in fade-in duration-700">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Resumen</p>
-          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Dashboard</h1>
+          <p className="text-[10px] font-800 uppercase tracking-[0.3em] text-[#C9A96E]">Resumen General</p>
+          <h1 className="font-display text-4xl text-[#0D0D0D] mt-2">Dashboard</h1>
         </div>
-        <button className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
-          Exportar
+        <button className="bg-gradient-to-r from-[#0D0D0D] to-[#2a2a2a] text-[#C9A96E] px-6 py-3 text-[10px] font-800 uppercase tracking-widest rounded-full shadow-xl shadow-black/10 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+          Exportar Datos
         </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {stats.map(stat => (
-          <div key={stat.label} className="bg-white border border-[#E6E1D8] p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm text-[#6B6860]">{stat.label}</span>
-              <span className={`px-2 py-1 text-[10px] font-700 rounded-full ${stat.tone === 'amber' ? 'bg-amber-100 text-amber-700' : stat.tone === 'slate' ? 'bg-slate-200 text-slate-700' : 'bg-rose-100 text-rose-700'}`}>
+      <div className="grid gap-6 md:grid-cols-3">
+        {stats.map((stat, i) => (
+          <div key={stat.label} className="group relative bg-white/70 backdrop-blur-2xl border border-white p-7 rounded-3xl shadow-xl shadow-black/5 hover:shadow-2xl hover:-translate-y-1.5 transition-all duration-500 overflow-hidden">
+            <div className="absolute -right-8 -top-8 w-32 h-32 bg-gradient-to-br from-[#C9A96E]/20 to-transparent rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+            <div className="flex items-center justify-between mb-6 relative z-10">
+              <span className="text-xs font-700 text-[#6B6860] uppercase tracking-widest">{stat.label}</span>
+              <span className={`px-3 py-1.5 text-[10px] font-800 rounded-full shadow-sm ${stat.tone === 'amber' ? 'bg-amber-100 text-amber-800' : stat.tone === 'slate' ? 'bg-slate-200 text-slate-800' : 'bg-rose-100 text-rose-800'}`}>
                 {stat.delta}
               </span>
             </div>
-            <div className="text-3xl font-display text-[#0D0D0D]">{stat.value}</div>
+            <div className="text-5xl font-display text-[#0D0D0D] relative z-10 tracking-tight">{stat.value === '0' || stat.value === '$0 COP' ? (dbOrders.length === 0 ? '...' : stat.value) : stat.value}</div>
           </div>
         ))}
       </div>
 
-      <div className="bg-white border border-[#E6E1D8] p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-5">
+      <div className="bg-white/70 backdrop-blur-2xl border border-white p-8 rounded-3xl shadow-xl shadow-black/5 relative overflow-hidden group">
+        <div className="flex items-center justify-between mb-10 relative z-10">
           <div>
-            <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#6B6860]">Ventas mensuales</p>
-            <h2 className="font-display text-2xl text-[#0D0D0D] mt-1">Ventas</h2>
+            <p className="text-[10px] font-800 uppercase tracking-[0.3em] text-[#6B6860]">Rendimiento Anual</p>
+            <h2 className="font-display text-3xl text-[#0D0D0D] mt-2">Ventas Mensuales</h2>
           </div>
-          <span className="text-sm text-[#6B6860]">2026</span>
+          <span className="px-5 py-2 bg-[#0D0D0D] text-[#C9A96E] text-xs font-700 rounded-full shadow-lg">2026</span>
         </div>
 
-        <div className="flex items-end gap-3 h-56">
+        <div className="flex items-end justify-between h-72 gap-2 sm:gap-4 relative z-10">
           {sales.map((value, index) => (
-            <div key={index} className="flex-1 flex flex-col items-center gap-2">
-              <div className="w-full flex items-end justify-center h-40">
+            <div key={index} className="flex-1 flex flex-col items-center gap-4">
+              <div className="w-full flex items-end justify-center h-56 relative group/bar">
                 <div
-                  className="w-full max-w-8 rounded-t-md bg-gradient-to-t from-[#0D0D0D] to-[#C9A96E]"
-                  style={{ height: `${value}%` }}
-                />
+                  className="w-full max-w-[48px] rounded-t-2xl bg-gradient-to-t from-[#0D0D0D] to-[#3a3a3a] shadow-lg transition-all duration-500 group-hover/bar:from-[#C9A96E] group-hover/bar:to-[#F3D79F] group-hover/bar:scale-y-105 origin-bottom relative overflow-hidden"
+                  style={{ height: `${value === 0 ? 4 : value}%` }}
+                >
+                  <div className="absolute inset-0 bg-white/20 translate-y-full group-hover/bar:translate-y-0 transition-transform duration-700 ease-out"></div>
+                </div>
               </div>
-              <span className="text-[10px] uppercase text-[#6B6860]">{['E','F','M','A','M','J','J','A','S','O','N','D'][index]}</span>
+              <span className="text-[10px] font-800 text-[#6B6860] uppercase group-hover/bar:text-[#0D0D0D] transition-colors">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][index]}</span>
             </div>
           ))}
         </div>
@@ -2630,47 +2715,50 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
   )
 
   return (
-    <div className="min-h-screen bg-[#F5F1ED] pt-16 flex">
-      <aside className="w-72 bg-[#0D0D0D] text-white flex-shrink-0 flex flex-col justify-between">
-        <div>
-          <div className="p-6 border-b border-white/10">
-            <div className="font-display text-2xl tracking-tight">VELOUR</div>
-            <p className="text-xs uppercase tracking-[0.2em] text-[#C9A96E] mt-2">Administración</p>
+    <div className="min-h-screen bg-[#FDFBF7] pt-16 flex font-sans selection:bg-[#C9A96E]/30 relative overflow-hidden">
+      <div className="absolute top-0 left-1/4 w-[50vw] h-[50vw] bg-[#C9A96E]/10 rounded-full blur-3xl -translate-y-1/2 pointer-events-none"></div>
+      
+      <aside className="w-72 bg-[#080808] text-white flex-shrink-0 flex flex-col justify-between border-r border-[#1a1a1a] relative z-20">
+        <div className="absolute inset-0 bg-gradient-to-b from-[#1a1a1a]/50 to-transparent pointer-events-none"></div>
+        <div className="relative z-10">
+          <div className="p-8 border-b border-white/10">
+            <div className="font-display text-3xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-[#C9A96E]">VELOUR</div>
+            <p className="text-[10px] font-800 uppercase tracking-[0.3em] text-[#C9A96E] mt-2">Administración</p>
           </div>
 
-          <nav className="p-4 space-y-2">
+          <nav className="p-6 space-y-3">
             {tabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`w-full flex items-center gap-3 px-3 py-3 text-left rounded-md transition-colors ${activeTab === tab.key ? 'bg-[#C9A96E] text-[#0D0D0D]' : 'text-white/80 hover:bg-white/5 hover:text-white'}`}
+                className={`w-full flex items-center gap-4 px-4 py-3.5 text-left rounded-2xl transition-all duration-300 ${activeTab === tab.key ? 'bg-gradient-to-r from-[#C9A96E] to-[#E5C687] text-[#0D0D0D] shadow-lg shadow-[#C9A96E]/20 scale-105' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
               >
-                <span className="text-base">{tab.icon}</span>
-                <span className="text-sm font-600">{tab.label}</span>
+                <span className="text-xl">{tab.icon}</span>
+                <span className="text-xs font-700 uppercase tracking-widest">{tab.label}</span>
               </button>
             ))}
           </nav>
         </div>
 
-        <div className="p-4 border-t border-white/10 space-y-2">
+        <div className="p-6 border-t border-white/10 space-y-3 relative z-10">
           <button
             type="button"
             onClick={() => setPage('home')}
-            className="w-full text-left px-3 py-2 text-sm font-600 text-white/80 hover:text-white hover:bg-white/5 transition-colors"
+            className="w-full text-left px-4 py-3 text-xs font-700 uppercase tracking-widest text-white/60 hover:text-white hover:bg-white/5 rounded-xl transition-all"
           >
-            ← Volver a la página principal
+            ← Volver a tienda
           </button>
           <button
             type="button"
             onClick={handleLogout}
-            className="w-full text-left px-3 py-2 text-sm font-600 text-red-300 hover:text-red-100 hover:bg-white/5 transition-colors"
+            className="w-full text-left px-4 py-3 text-xs font-700 uppercase tracking-widest text-red-400/80 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-all"
           >
             Cerrar sesión
           </button>
         </div>
       </aside>
 
-      <main className="flex-1 p-6 md:p-8">
+      <main className="flex-1 p-8 md:p-12 h-[calc(100vh-4rem)] overflow-y-auto relative z-10 scrollbar-hide">
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'orders' && renderOrders()}
         {activeTab === 'products' && renderProducts()}
