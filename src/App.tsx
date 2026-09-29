@@ -44,6 +44,22 @@ interface StoredUser {
   measurements: UserMeasurements
 }
 
+interface ReturnRow {
+  code: string
+  order: string
+  client: string
+  email?: string
+  phone?: string
+  address?: string
+  product: string
+  productImage?: string
+  reason: string
+  details?: string
+  date: string
+  status: string
+  action: string
+}
+
 const DEFAULT_MEASUREMENTS: UserMeasurements = {
   gender: 'F',
   height: '',
@@ -739,31 +755,97 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<UserRole>('client')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [needsConfirmation, setNeedsConfirmation] = useState(false)
+  const [resending, setResending] = useState(false)
   const [loading, setLoading] = useState(false)
   const pageRef = useGsapEntrance([])
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!isValidEmail(email.trim())) {
+    setNotice('')
+    setNeedsConfirmation(false)
+
+    const normalizedEmail = email.trim().toLowerCase()
+
+    if (!isValidEmail(normalizedEmail)) {
       setError('Ingresa un correo electrónico válido.')
       return
     }
+
     if (password.length < 8) {
       setError('La contraseña debe tener al menos 8 caracteres.')
       return
     }
-    const user = getStoredUsers().find(item => item.email === email.trim().toLowerCase() && item.role === role)
-    if (!user || user.password !== password) {
-      setError(`No existe una cuenta de ${role === 'admin' ? 'administrador' : 'cliente'} con esas credenciales.`)
-      return
-    }
+
     setLoading(true)
-    setTimeout(() => {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email: user.email, role: user.role }))
+
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      })
+
+      if (authError || !authData.user) {
+        throw authError ?? new Error('No se pudo iniciar sesión.')
+      }
+
+      const { data: profileData, error: profileError } = await supabase
+        .from('perfiles')
+        .select('id, correo, nombre, apellido, rol')
+        .eq('id', authData.user.id)
+        .maybeSingle()
+
+      if (profileError) {
+        console.error('Profile lookup error:', profileError)
+      }
+
+      const profileRole = String(profileData?.rol ?? role).toLowerCase()
+
+      if (role === 'admin' && profileRole !== 'admin') {
+        await supabase.auth.signOut()
+        setError('No existe una cuenta de administrador con esas credenciales.')
+        return
+      }
+
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+        email: authData.user.email,
+        role: profileRole === 'admin' ? 'admin' : 'client',
+      }))
+
+      setPage(profileRole === 'admin' ? 'admin' : 'avatar')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error al iniciar sesión.'
+      const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : ''
+      if (code === 'email_not_confirmed' || message.toLowerCase().includes('email not confirmed')) {
+        setNeedsConfirmation(true)
+        setError('Confirma tu correo electrónico antes de iniciar sesión.')
+      } else {
+        setError(message.includes('Invalid login credentials') ? `No existe una cuenta de ${role === 'admin' ? 'administrador' : 'cliente'} con esas credenciales.` : message)
+      }
+    } finally {
       setLoading(false)
-      setPage(user.role === 'admin' ? 'admin' : 'avatar')
-    }, 500)
+    }
+  }
+
+  async function resendConfirmation() {
+    setResending(true)
+    setError('')
+    setNotice('')
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email: email.trim().toLowerCase(),
+        options: { emailRedirectTo: window.location.origin },
+      })
+      if (resendError) throw resendError
+      setNotice('Enviamos un nuevo correo de confirmación. Revisa también la carpeta de spam.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo reenviar el correo de confirmación.')
+    } finally {
+      setResending(false)
+    }
   }
 
   return (
@@ -845,6 +927,8 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
               className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50 mt-2"
             >
               {loading ? 'Ingresando...' : 'Ingresar'}
+            {needsConfirmation && <button type="button" onClick={resendConfirmation} disabled={resending} className="w-full text-sm text-[#0D0D0D] underline disabled:opacity-50">{resending ? 'Reenviando...' : 'Reenviar correo de confirmación'}</button>}
+            {notice && <p role="status" className="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2">{notice}</p>}
             </button>
             {error && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2">{error}</p>}
           </form>
@@ -870,6 +954,9 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
   const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '', role: 'client' as UserRole, adminCode: '' })
   const [measurements, setMeasurements] = useState<UserMeasurements>(DEFAULT_MEASUREMENTS)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [confirmationPending, setConfirmationPending] = useState(false)
+  const [resending, setResending] = useState(false)
   const [loading, setLoading] = useState(false)
   const pageRef = useGsapEntrance([])
   const formRef = useRef<HTMLFormElement>(null)
@@ -877,24 +964,68 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
   function update(k: keyof typeof form, v: string) { setForm(f => ({ ...f, [k]: v })) }
   function updateMeasurement(k: keyof UserMeasurements, v: string) { setMeasurements(m => ({ ...m, [k]: v })) }
 
-  function submitAccount() {
+  async function submitAccount() {
     const email = form.email.trim().toLowerCase()
-    if (getStoredUsers().some(user => user.email === email)) return setError('Ya existe una cuenta con ese correo electrónico.')
-
-    const newUser: StoredUser = {
-      ...form,
-      email,
-      name: form.name.trim(),
-      measurements: form.role === 'admin' ? DEFAULT_MEASUREMENTS : measurements,
-    }
+    const fullName = form.name.trim()
+    const [firstName, ...rest] = fullName.split(/\s+/)
+    const lastName = rest.join(' ')
 
     setLoading(true)
-    setTimeout(() => {
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify([...getStoredUsers(), newUser]))
+
+    try {
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password: form.password,
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: {
+            name: fullName,
+            nombre: firstName || 'Usuario',
+            apellido: lastName || '',
+            role: form.role,
+            rol: form.role,
+            genero: form.role === 'admin' ? 'unisex' : measurements.gender,
+            medidas: form.role === 'admin' ? null : measurements,
+          },
+        },
+      })
+
+      if (signUpError) throw signUpError
+      if (!signUpData.user) throw new Error('No se pudo crear la cuenta.')
+
+      if (!signUpData.session) {
+        setConfirmationPending(true)
+        setNotice(`Cuenta creada. Confirma el correo enviado a ${email} antes de iniciar sesión.`)
+        return
+      }
+
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
-      setLoading(false)
       setPage(form.role === 'admin' ? 'admin' : 'avatar')
-    }, 500)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo completar el registro.'
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function resendConfirmation() {
+    setResending(true)
+    setError('')
+    setNotice('')
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email: form.email.trim().toLowerCase(),
+        options: { emailRedirectTo: window.location.origin },
+      })
+      if (resendError) throw resendError
+      setNotice('Enviamos un nuevo correo de confirmación. Revisa también la carpeta de spam.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo reenviar el correo de confirmación.')
+    } finally {
+      setResending(false)
+    }
   }
 
   function handleStep1(e: React.FormEvent) {
@@ -1022,7 +1153,7 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
               <p className="text-xs text-[#6B6860]">
                 Al crear tu cuenta aceptas nuestros <a href="#" className="text-[#C9A96E] hover:underline">Términos de uso</a> y <a href="#" className="text-[#C9A96E] hover:underline">Política de privacidad</a>.
               </p>
-              <button type="submit" disabled={loading}
+              <button type="submit" disabled={loading || confirmationPending}
                 className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50 mt-2">
                 {form.role === 'admin' ? 'Crear cuenta' : 'Continuar a medidas'}
               </button>
@@ -1037,12 +1168,13 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
                 {measurementFields.map(field => <div key={field.key}><label htmlFor={`reg-${field.key}`} className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">{field.label}</label><div className="relative"><input id={`reg-${field.key}`} type="number" min="0" step="0.1" value={measurements[field.key]} onChange={e => updateMeasurement(field.key, e.target.value)} placeholder={field.placeholder} required className="w-full px-3 py-3 pr-10 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white" /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B6860] text-xs">{field.unit}</span></div></div>)}
               </div>
               <p className="text-xs text-[#6B6860]">Tus datos biométricos se guardan junto a tu perfil para recomendarte tallas.</p>
-              <button type="submit" disabled={loading} className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50">{loading ? 'Creando cuenta...' : 'Crear cuenta'}</button>
+              <button type="submit" disabled={loading || confirmationPending} className="w-full bg-[#0D0D0D] text-white py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50">{loading ? 'Creando cuenta...' : 'Crear cuenta'}</button>
               <button type="button" onClick={() => setStep(2)} className="w-full text-xs text-[#6B6860] hover:text-[#0D0D0D] transition-colors py-2">← Volver</button>
             </form>
           )}
 
           {error && <p role="alert" className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2">{error}</p>}
+          {notice && <div role="status" className="mt-4 space-y-3 border border-green-200 bg-green-50 px-3 py-3 text-sm text-green-900"><p>{notice}</p>{confirmationPending && <button type="button" onClick={resendConfirmation} disabled={resending} className="font-600 underline disabled:opacity-50">{resending ? 'Reenviando...' : 'Reenviar correo de confirmación'}</button>}</div>}
 
           <div className="mt-6 pt-6 border-t border-[#DDD9D0] text-center">
             <p className="text-sm text-[#6B6860]">
@@ -2314,7 +2446,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     }
   })
 
-  const returnRows = [
+  const fallbackReturnRows: ReturnRow[] = [
     {
       code: 'DEV-2041',
       order: '#1042',
@@ -2323,12 +2455,12 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       phone: '+57 310 456 7890',
       address: 'Cra. 8 #120-45, Bogotá',
       product: 'Chaqueta Oversized',
-      productImage: 'https://images.unsplash.com/photo-1555529771-835f59fc5efe?w=800&h=1000&fit=crop&auto=format',
       reason: 'Talla incorrecta',
-      details: 'El cliente solicitó cambio por talla más pequeña; la prenda llegó sin etiquetas y con la caja cerrada.',
       date: '13 Ago 2026',
       status: 'En revisión',
       action: 'Aprobar',
+      details: 'El cliente solicitó cambio por talla más pequeña; la prenda llegó sin etiquetas y con la caja cerrada.',
+      productImage: 'https://images.unsplash.com/photo-1555529771-835f59fc5efe?w=800&h=1000&fit=crop&auto=format',
     },
     {
       code: 'DEV-2042',
@@ -2338,12 +2470,12 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       phone: '+57 315 222 4411',
       address: 'Cl. 80 #23-90, Medellín',
       product: 'Pantalón Wide Leg',
-      productImage: 'https://images.unsplash.com/photo-1540221652346-e5dd6b50f3e7?w=800&h=1000&fit=crop&auto=format',
       reason: 'Defecto de material',
-      details: 'Se reportó que la tela presenta rotura en la costura lateral. Se adjuntó evidencia fotográfica del defecto.',
       date: '12 Ago 2026',
       status: 'Aprobado',
       action: 'Rechazar',
+      details: 'Se reportó que la tela presenta rotura en la costura lateral. Se adjuntó evidencia fotográfica del defecto.',
+      productImage: 'https://images.unsplash.com/photo-1540221652346-e5dd6b50f3e7?w=800&h=1000&fit=crop&auto=format',
     },
     {
       code: 'DEV-2043',
@@ -2353,15 +2485,16 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       phone: '+57 300 760 9912',
       address: 'Av. 68 #50-35, Cali',
       product: 'Vestido Fluido',
-      productImage: 'https://images.unsplash.com/photo-1549570652-97324981a6fd?w=800&h=1000&fit=crop&auto=format',
       reason: 'Cambio de opinión',
-      details: 'La clienta desea devolver el producto por cambio de preferencia; adjuntó imágenes del vestido en perfecto estado.',
       date: '11 Ago 2026',
       status: 'Pendiente',
       action: 'Aprobar',
+      details: 'La clienta desea devolver el producto por cambio de preferencia; adjuntó imágenes del vestido en perfecto estado.',
+      productImage: 'https://images.unsplash.com/photo-1549570652-97324981a6fd?w=800&h=1000&fit=crop&auto=format',
     },
   ]
-  const returnRows = dbReturns.map(ret => ({
+
+  const returnRows: ReturnRow[] = dbReturns.length > 0 ? dbReturns.map(ret => ({
     code: ret.codigo_devolucion,
     order: ret.pedido_id ? ret.pedido_id.substring(0, 8) : '',
     client: ret.perfiles ? `${ret.perfiles.nombre || ''} ${ret.perfiles.apellido || ''}`.trim() : 'Desconocido',
@@ -2369,11 +2502,30 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     reason: ret.motivo,
     date: new Date(ret.creado_el).toLocaleDateString('es-CO'),
     status: ret.estado ? ret.estado.charAt(0).toUpperCase() + ret.estado.slice(1) : 'Desconocido',
-    action: 'Ver'
-  }))
+    action: 'Ver',
+    email: '',
+    phone: '',
+    address: '',
+    details: '',
+    productImage: '',
+  })) : fallbackReturnRows
 
-  const [selectedReturnCode, setSelectedReturnCode] = useState(returnRows[0].code)
-  const selectedReturn = returnRows.find(row => row.code === selectedReturnCode) ?? returnRows[0]
+  const [selectedReturnCode, setSelectedReturnCode] = useState(returnRows[0]?.code ?? '')
+  const selectedReturn = returnRows.find(row => row.code === selectedReturnCode) ?? returnRows[0] ?? {
+    code: '',
+    order: '',
+    client: '',
+    email: '',
+    phone: '',
+    address: '',
+    product: '',
+    reason: '',
+    date: '',
+    status: '',
+    action: 'Ver',
+    details: '',
+    productImage: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&h=1000&fit=crop&auto=format'
+  }
 
   const sales = [48, 64, 58, 82, 96, 78, 110, 125, 116, 88, 132, 146]
 
@@ -2671,17 +2823,17 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Correo</p>
-                <p>{selectedReturn.email}</p>
+                <p>{selectedReturn.email ?? ''}</p>
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Teléfono</p>
-                <p>{selectedReturn.phone}</p>
+                <p>{selectedReturn.phone ?? ''}</p>
               </div>
             </div>
 
             <div>
               <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Dirección</p>
-              <p>{selectedReturn.address}</p>
+              <p>{selectedReturn.address ?? ''}</p>
             </div>
 
             <div>
@@ -2696,14 +2848,14 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
 
             <div>
               <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Información del cliente</p>
-              <p className="text-[#6B6860] leading-relaxed">{selectedReturn.details}</p>
+              <p className="text-[#6B6860] leading-relaxed">{selectedReturn.details ?? ''}</p>
             </div>
           </div>
 
           <div className="rounded-lg border border-[#DDD9D0] bg-white p-3">
             <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-2">Imagen adjunta</p>
             <img
-              src={selectedReturn.productImage}
+              src={selectedReturn.productImage ?? 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&h=1000&fit=crop&auto=format'}
               alt={`Producto de la devolución ${selectedReturn.product}`}
               className="w-full h-72 object-cover rounded-md border border-[#E6E1D8]"
             />
