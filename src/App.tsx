@@ -1000,6 +1000,9 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
       }
 
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
+      if (form.role !== 'admin') {
+        localStorage.setItem('velour-temp-measurements', JSON.stringify(measurements))
+      }
       setPage(form.role === 'admin' ? 'admin' : 'avatar')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo completar el registro.'
@@ -1207,16 +1210,28 @@ function AvatarPage({ setPage }: { setPage: (p: Page) => void }) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setStep('generating')
-    // Animate progress bar
-    if (progressRef.current) {
-      gsap.fromTo(progressRef.current, { width: '0%' }, { width: '100%', duration: 2.5, ease: 'power1.inOut' })
-    }
-    setTimeout(() => setStep('done'), 2800)
   }
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('velour-temp-measurements')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        setMeasurements(parsed)
+        setGender(parsed.gender || 'F')
+        setStep('generating')
+        localStorage.removeItem('velour-temp-measurements')
+      }
+    } catch {}
+  }, [])
 
   useEffect(() => {
     if (step === 'done' && avatarRef.current) {
       gsap.fromTo(avatarRef.current, { opacity: 0, scale: 0.8, y: 30 }, { opacity: 1, scale: 1, y: 0, duration: 0.7, ease: 'back.out(1.4)' })
+    } else if (step === 'generating' && progressRef.current) {
+      gsap.fromTo(progressRef.current, { width: '0%' }, { width: '100%', duration: 2.5, ease: 'power1.inOut' })
+      const t = setTimeout(() => setStep('done'), 2800)
+      return () => clearTimeout(t)
     }
   }, [step])
 
