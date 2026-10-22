@@ -10,7 +10,7 @@ gsap.registerPlugin(ScrollTrigger)
 type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'avatar' | 'tryon' | 'checkout' | 'admin' | 'forgot-password'
 
 interface Product {
-  id: number
+  id: number | string
   name: string
   category: string
   price: number
@@ -102,24 +102,61 @@ function validateMeasurements(measurements: UserMeasurements) {
 // ─── Data ────────────────────────────────────────────────────────────────────
 
 const PRODUCTS: Product[] = [
-  { id: 1, name: 'Blazer Estructurado', category: 'Blazers', price: 189000, img: 'https://images.unsplash.com/photo-1613915617430-8ab0fd7c6baf?w=600&h=750&fit=crop&auto=format', tag: 'Nuevo' },
-  { id: 2, name: 'Gabardina Clásica', category: 'Abrigos', price: 245000, img: 'https://images.unsplash.com/photo-1601762603339-fd61e28b698a?w=600&h=750&fit=crop&auto=format', tag: 'Destacado' },
-  { id: 3, name: 'Vestido Minimalista', category: 'Vestidos', price: 134000, img: 'https://images.unsplash.com/photo-1659522761084-79196b64abe4?w=600&h=750&fit=crop&auto=format' },
-  { id: 4, name: 'Conjunto Neutro', category: 'Conjuntos', price: 210000, img: 'https://images.unsplash.com/photo-1614028609503-590a6a47146a?w=600&h=750&fit=crop&auto=format', tag: 'Top ventas' },
-  { id: 5, name: 'Camisa Lino Premium', category: 'Camisas', price: 98000, img: 'https://images.unsplash.com/photo-1532453288672-3a27e9be9efd?w=600&h=750&fit=crop&auto=format' },
-  { id: 6, name: 'Pantalón Wide Leg', category: 'Pantalones', price: 142000, img: 'https://images.unsplash.com/photo-1540221652346-e5dd6b50f3e7?w=600&h=750&fit=crop&auto=format', tag: 'Nuevo' },
-  { id: 7, name: 'Vestido Fluido', category: 'Vestidos', price: 156000, img: 'https://images.unsplash.com/photo-1549570652-97324981a6fd?w=600&h=750&fit=crop&auto=format' },
-  { id: 8, name: 'Chaqueta Oversized', category: 'Blazers', price: 178000, img: 'https://images.unsplash.com/photo-1555529771-835f59fc5efe?w=600&h=750&fit=crop&auto=format' },
+  { id: 1, name: 'Blazer Estructurado', category: 'Blazers', price: 189, img: 'https://images.unsplash.com/photo-1613915617430-8ab0fd7c6baf?w=600&h=750&fit=crop&auto=format', tag: 'Nuevo' },
+  { id: 2, name: 'Gabardina Clásica', category: 'Abrigos', price: 245, img: 'https://images.unsplash.com/photo-1601762603339-fd61e28b698a?w=600&h=750&fit=crop&auto=format', tag: 'Destacado' },
+  { id: 3, name: 'Vestido Minimalista', category: 'Vestidos', price: 134, img: 'https://images.unsplash.com/photo-1659522761084-79196b64abe4?w=600&h=750&fit=crop&auto=format' },
+  { id: 4, name: 'Conjunto Neutro', category: 'Conjuntos', price: 210, img: 'https://images.unsplash.com/photo-1614028609503-590a6a47146a?w=600&h=750&fit=crop&auto=format', tag: 'Top ventas' },
+  { id: 5, name: 'Camisa Lino Premium', category: 'Camisas', price: 98, img: 'https://images.unsplash.com/photo-1532453288672-3a27e9be9efd?w=600&h=750&fit=crop&auto=format' },
+  { id: 6, name: 'Pantalón Wide Leg', category: 'Pantalones', price: 142, img: 'https://images.unsplash.com/photo-1540221652346-e5dd6b50f3e7?w=600&h=750&fit=crop&auto=format', tag: 'Nuevo' },
+  { id: 7, name: 'Vestido Fluido', category: 'Vestidos', price: 156, img: 'https://images.unsplash.com/photo-1549570652-97324981a6fd?w=600&h=750&fit=crop&auto=format' },
+  { id: 8, name: 'Chaqueta Oversized', category: 'Blazers', price: 178, img: 'https://images.unsplash.com/photo-1555529771-835f59fc5efe?w=600&h=750&fit=crop&auto=format' },
 ]
 
 const CATEGORIES = ['Todos', 'Blazers', 'Abrigos', 'Vestidos', 'Conjuntos', 'Camisas', 'Pantalones']
+const CATEGORY_SLOT_TYPES: Record<string, 'superior' | 'inferior' | 'calzado' | 'abrigo' | 'cuerpo_entero' | 'accesorio'> = {
+  Blazers: 'superior',
+  Abrigos: 'abrigo',
+  Vestidos: 'cuerpo_entero',
+  Conjuntos: 'cuerpo_entero',
+  Camisas: 'superior',
+  Pantalones: 'inferior',
+}
 
 const SIZES = ['XS', 'S', 'M', 'L', 'XL']
+const PRICE_STORAGE_SCALE = 1000
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatPrice(n: number) {
-  return `$${n.toLocaleString('es-CO')} COP`
+  return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(n)
+}
+
+function createSlug(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+async function fetchProductsFromSupabase() {
+  const withImages = await supabase
+    .from('productos')
+    .select('id, nombre, precio_base, etiqueta, imagen_url, categorias(id, nombre)')
+    .order('id')
+
+  const missingImageColumn = withImages.error?.message.includes('imagen_url')
+    && (withImages.error.code === '42703' || withImages.error.code === 'PGRST204')
+  if (!missingImageColumn) {
+    return withImages
+  }
+
+  return supabase
+    .from('productos')
+    .select('id, nombre, precio_base, etiqueta, categorias(id, nombre)')
+    .order('id')
 }
 
 function useGsapEntrance(deps: unknown[] = []) {
@@ -259,7 +296,7 @@ function WhatsAppFAB() {
   return (
     <a
       ref={ref}
-      href="https://wa.me/573001234567?text=Hola%2C%20me%20interesa%20conocer%20m%C3%A1s%20sobre%20sus%20productos"
+      href="https://wa.me/?text=Hola%2C%20me%20interesa%20conocer%20m%C3%A1s%20sobre%20sus%20productos"
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Contactar por WhatsApp"
@@ -276,7 +313,7 @@ function WhatsAppFAB() {
 // ─── Marquee Banner ───────────────────────────────────────────────────────────
 
 function MarqueeBanner() {
-  const items = ['NUEVA COLECCIÓN 2025', 'ENVÍO GRATIS +$200K', 'AVATAR VIRTUAL', 'MODA SOSTENIBLE', 'PRUEBA VIRTUAL', 'DISEÑO EXCLUSIVO']
+  const items = ['NUEVA COLECCIÓN 2025', 'ENVÍO GRATIS DESDE S/ 200', 'AVATAR VIRTUAL', 'MODA SOSTENIBLE', 'PRUEBA VIRTUAL', 'DISEÑO EXCLUSIVO']
   const doubled = [...items, ...items]
   return (
     <div className="bg-[#0D0D0D] text-[#C9A96E] text-xs font-600 tracking-[0.2em] uppercase py-2.5 overflow-hidden">
@@ -293,7 +330,7 @@ function MarqueeBanner() {
 
 // ─── Home Page ────────────────────────────────────────────────────────────────
 
-function HomePage({ setPage }: { setPage: (p: Page) => void }) {
+function HomePage({ setPage, products }: { setPage: (p: Page) => void; products: Product[] }) {
   const heroRef = useRef<HTMLDivElement>(null)
   const heroTextRef = useRef<HTMLDivElement>(null)
   const featuresRef = useRef<HTMLDivElement>(null)
@@ -320,7 +357,7 @@ function HomePage({ setPage }: { setPage: (p: Page) => void }) {
     return () => ctx.revert()
   }, [])
 
-  const featured = PRODUCTS.slice(0, 4)
+  const featured = products.slice(0, 4)
 
   return (
     <div>
@@ -567,13 +604,14 @@ function ProductCard({
 
 // ─── Products Page ────────────────────────────────────────────────────────────
 
-function ProductsPage({ setPage, addToCart }: { setPage: (p: Page) => void; addToCart: (p: Product, size: string) => void }) {
+function ProductsPage({ setPage, addToCart, products }: { setPage: (p: Page) => void; addToCart: (p: Product, size: string) => void; products: Product[] }) {
   const [activeCategory, setActiveCategory] = useState('Todos')
   const [search, setSearch] = useState('')
   const gridRef = useRef<HTMLDivElement>(null)
   const pageRef = useGsapEntrance([])
 
-  const filtered = PRODUCTS.filter(p => {
+  const categories = ['Todos', ...new Set(products.map(product => product.category))]
+  const filtered = products.filter(p => {
     const matchCat = activeCategory === 'Todos' || p.category === activeCategory
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase())
     return matchCat && matchSearch
@@ -615,7 +653,7 @@ function ProductsPage({ setPage, addToCart }: { setPage: (p: Page) => void; addT
 
           {/* Categories */}
           <div className="flex gap-2 flex-wrap">
-            {CATEGORIES.map(c => (
+            {categories.map(c => (
               <button
                 key={c}
                 onClick={() => setActiveCategory(c)}
@@ -658,11 +696,11 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
   const pageRef = useGsapEntrance([])
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0)
 
-  function remove(id: number, size: string) {
+  function remove(id: Product['id'], size: string) {
     setCart(c => c.filter(i => !(i.id === id && i.size === size)))
   }
 
-  function updateQty(id: number, size: string, delta: number) {
+  function updateQty(id: Product['id'], size: string, delta: number) {
     setCart(c => c.map(i => {
       if (i.id === id && i.size === size) {
         const qty = Math.max(1, i.qty + delta)
@@ -724,14 +762,14 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
                 </div>
                 <div className="flex justify-between text-white/60">
                   <span>Envío</span>
-                  <span className="text-[#C9A96E]">{total >= 200000 ? 'Gratis' : formatPrice(15000)}</span>
+                  <span className="text-[#C9A96E]">{total >= 200 ? 'Gratis' : formatPrice(15)}</span>
                 </div>
                 <div className="border-t border-white/10 pt-3 flex justify-between font-600">
                   <span>Total</span>
-                  <span>{formatPrice(total + (total >= 200000 ? 0 : 15000))}</span>
+                  <span>{formatPrice(total + (total >= 200 ? 0 : 15))}</span>
                 </div>
               </div>
-              {total >= 200000 && (
+              {total >= 200 && (
                 <p className="text-[#C9A96E] text-xs mb-4 text-center">◆ Envío gratis aplicado</p>
               )}
               <button onClick={onCheckout} className="w-full bg-[#C9A96E] text-[#0D0D0D] py-3.5 text-sm font-700 tracking-wide uppercase hover:bg-[#b8955c] transition-colors mb-3">
@@ -1904,17 +1942,17 @@ function TryOnPage({ setPage }: { setPage: (p: Page) => void }) {
 
 type CheckoutStep = 'shipping' | 'payment' | 'confirm'
 
-function CheckoutPage({ cart, onSuccess }: { cart: CartItem[]; onSuccess: () => void }) {
+function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSuccess: () => void; setPage: (page: Page) => void }) {
   const [step, setStep] = useState<CheckoutStep>('shipping')
   const [processing, setProcessing] = useState(false)
-  const [payMethod, setPayMethod] = useState<'card' | 'pse' | 'nequi'>('card')
+  const [payMethod, setPayMethod] = useState<'card' | 'transfer' | 'yape'>('card')
   const [shipping, setShipping] = useState({ name: '', lastname: '', email: '', phone: '', address: '', city: '', dept: '', zip: '' })
   const [card, setCard] = useState({ number: '', name: '', expiry: '', cvv: '' })
   const pageRef = useGsapEntrance([])
   const panelRef = useRef<HTMLDivElement>(null)
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
-  const shipping_fee = subtotal >= 200000 ? 0 : 15000
+  const shipping_fee = subtotal >= 200 ? 0 : 15
   const total = subtotal + shipping_fee
 
   function animateStep(next: CheckoutStep) {
@@ -2016,7 +2054,7 @@ function CheckoutPage({ cart, onSuccess }: { cart: CartItem[]; onSuccess: () => 
                     </div>
                     <div>
                       <label htmlFor="sh-phone" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Teléfono</label>
-                      <input id="sh-phone" type="tel" required autoComplete="tel" placeholder="+57 300 123 4567"
+                      <input id="sh-phone" type="tel" required autoComplete="tel" placeholder="+51 999 123 456"
                         value={shipping.phone} onChange={e => setShipping(s => ({ ...s, phone: e.target.value }))}
                         className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
                     </div>
@@ -2024,16 +2062,16 @@ function CheckoutPage({ cart, onSuccess }: { cart: CartItem[]; onSuccess: () => 
 
                   <div>
                     <label htmlFor="sh-address" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Dirección</label>
-                    <input id="sh-address" type="text" required autoComplete="street-address" placeholder="Calle 123 # 45-67, Apto 8"
+                    <input id="sh-address" type="text" required autoComplete="street-address" placeholder="Av. Larco 123, dpto. 402"
                       value={shipping.address} onChange={e => setShipping(s => ({ ...s, address: e.target.value }))}
                       className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
                   </div>
 
                   <div className="grid sm:grid-cols-3 gap-4">
                     {[
-                      { id: 'sh-city', label: 'Ciudad', key: 'city', placeholder: 'Bogotá', auto: 'address-level2' },
-                      { id: 'sh-dept', label: 'Departamento', key: 'dept', placeholder: 'Cundinamarca', auto: 'address-level1' },
-                      { id: 'sh-zip', label: 'Código postal', key: 'zip', placeholder: '110111', auto: 'postal-code' },
+                      { id: 'sh-city', label: 'Ciudad', key: 'city', placeholder: 'Lima', auto: 'address-level2' },
+                      { id: 'sh-dept', label: 'Distrito', key: 'dept', placeholder: 'Miraflores', auto: 'address-level1' },
+                      { id: 'sh-zip', label: 'Código postal', key: 'zip', placeholder: '15074', auto: 'postal-code' },
                     ].map(f => (
                       <div key={f.id}>
                         <label htmlFor={f.id} className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">{f.label}</label>
@@ -2070,19 +2108,19 @@ function CheckoutPage({ cart, onSuccess }: { cart: CartItem[]; onSuccess: () => 
                           <circle cx="32" cy="12" r="7" fill="#F79E1B" opacity="0.85"/>
                         </svg>
                       )},
-                      { id: 'pse', label: 'PSE', icon: (
+                      { id: 'transfer', label: 'Transferencia', icon: (
                         <svg viewBox="0 0 38 24" width="38" height="24" aria-hidden="true">
-                          <rect width="38" height="24" rx="4" fill="#004B8D"/>
-                          <text x="19" y="16" textAnchor="middle" fill="white" fontSize="9" fontWeight="bold" fontFamily="sans-serif">PSE</text>
+                          <rect width="38" height="24" rx="4" fill="#D8242A"/>
+                          <text x="19" y="16" textAnchor="middle" fill="white" fontSize="8" fontWeight="bold" fontFamily="sans-serif">BANCOS</text>
                         </svg>
                       )},
-                      { id: 'nequi', label: 'Nequi', icon: (
+                      { id: 'yape', label: 'Yape', icon: (
                         <svg viewBox="0 0 38 24" width="38" height="24" aria-hidden="true">
-                          <rect width="38" height="24" rx="4" fill="#6C0F8B"/>
-                          <text x="19" y="16" textAnchor="middle" fill="white" fontSize="8" fontWeight="bold" fontFamily="sans-serif">nequi</text>
+                          <rect width="38" height="24" rx="4" fill="#742284"/>
+                          <text x="19" y="16" textAnchor="middle" fill="white" fontSize="8" fontWeight="bold" fontFamily="sans-serif">Yape</text>
                         </svg>
                       )},
-                    ] as { id: 'card' | 'pse' | 'nequi'; label: string; icon: React.ReactNode }[]).map(m => (
+                    ] as { id: 'card' | 'transfer' | 'yape'; label: string; icon: React.ReactNode }[]).map(m => (
                       <button
                         key={m.id}
                         type="button"
@@ -2157,44 +2195,33 @@ function CheckoutPage({ cart, onSuccess }: { cart: CartItem[]; onSuccess: () => 
                     </div>
                   )}
 
-                  {payMethod === 'pse' && (
+                  {payMethod === 'transfer' && (
                     <div className="space-y-4">
                       <div>
-                        <label htmlFor="pse-bank" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Banco</label>
-                        <select id="pse-bank" required className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors">
+                        <label htmlFor="transfer-bank" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Banco</label>
+                        <select id="transfer-bank" required className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors">
                           <option value="">Selecciona tu banco</option>
-                          {['Bancolombia', 'Davivienda', 'Banco de Bogotá', 'BBVA', 'Banco Popular', 'Colpatria', 'Occidente'].map(b => (
+                          {['BCP', 'Interbank', 'BBVA Perú', 'Scotiabank', 'Banco de la Nación'].map(b => (
                             <option key={b} value={b}>{b}</option>
                           ))}
                         </select>
                       </div>
                       <div>
-                        <label htmlFor="pse-doc" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Tipo de persona</label>
-                        <div className="grid grid-cols-2 gap-3">
-                          {['Natural', 'Jurídica'].map(t => (
-                            <label key={t} className="flex items-center gap-2 border border-[#DDD9D0] px-4 py-3 cursor-pointer hover:border-[#C9A96E] transition-colors">
-                              <input type="radio" name="pse-type" value={t} className="accent-[#C9A96E]" defaultChecked={t === 'Natural'} />
-                              <span className="text-sm text-[#0D0D0D]">{t}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <label htmlFor="pse-nit" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Número de documento</label>
-                        <input id="pse-nit" type="text" inputMode="numeric" placeholder="1234567890" required
+                        <label htmlFor="transfer-dni" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">DNI</label>
+                        <input id="transfer-dni" type="text" inputMode="numeric" placeholder="12345678" maxLength={8} required
                           className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
                       </div>
                     </div>
                   )}
 
-                  {payMethod === 'nequi' && (
+                  {payMethod === 'yape' && (
                     <div className="space-y-4">
-                      <div className="bg-[#6C0F8B]/5 border border-[#6C0F8B]/20 p-4 text-sm text-[#6B6860]">
-                        Recibirás una notificación en tu app Nequi para confirmar el pago de <strong className="text-[#0D0D0D]">{formatPrice(total)}</strong>.
+                      <div className="bg-[#742284]/5 border border-[#742284]/20 p-4 text-sm text-[#6B6860]">
+                        Confirma el pago de <strong className="text-[#0D0D0D">{formatPrice(total)}</strong> desde tu app Yape.
                       </div>
                       <div>
-                        <label htmlFor="nequi-phone" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Número Nequi (celular)</label>
-                        <input id="nequi-phone" type="tel" inputMode="numeric" placeholder="300 123 4567" required
+                        <label htmlFor="yape-phone" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Número asociado a Yape</label>
+                        <input id="yape-phone" type="tel" inputMode="numeric" placeholder="999 123 456" pattern="[0-9 ]{9,11}" required
                           className="w-full px-4 py-3 border border-[#DDD9D0] text-sm font-mono tracking-widest focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
                       </div>
                     </div>
@@ -2205,6 +2232,10 @@ function CheckoutPage({ cart, onSuccess }: { cart: CartItem[]; onSuccess: () => 
                     <svg width="16" height="20" viewBox="0 0 16 20" fill="none" aria-hidden="true"><path d="M8 0L0 3v7c0 5.25 3.5 10.15 8 11.5C12.5 20.15 16 15.25 16 10V3L8 0z" fill="#C9A96E" opacity="0.8"/></svg>
                     <p className="text-[10px] text-[#6B6860]">Pago 100% seguro · Encriptación SSL 256-bit · PCI-DSS compliant</p>
                   </div>
+
+                  <button type="button" onClick={() => setPage('products')} className="w-full border border-[#DDD9D0] px-4 py-3 text-xs font-600 uppercase tracking-wide text-[#6B6860] hover:border-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
+                    ← Seguir comprando
+                  </button>
 
                   <div className="flex gap-3 pt-2">
                     <button type="button" onClick={() => animateStep('shipping')} className="px-6 py-4 border border-[#DDD9D0] text-sm font-600 text-[#6B6860] hover:border-[#0D0D0D] hover:text-[#0D0D0D] transition-colors">
@@ -2344,58 +2375,193 @@ function ConfirmStep({ orderNum, total, cart, onSuccess }: { orderNum: string; t
 
 type AdminTab = 'dashboard' | 'orders' | 'products' | 'clients' | 'returns'
 
-function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
+function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page) => void; onProductsChanged: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard')
 
   // States for DB data
   const [dbOrders, setDbOrders] = useState<any[]>([])
   const [dbProducts, setDbProducts] = useState<any[]>([])
+  const [dbCategories, setDbCategories] = useState<any[]>([])
   const [dbClients, setDbClients] = useState<any[]>([])
   const [dbReturns, setDbReturns] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [dbError, setDbError] = useState('')
+  const [productEditorOpen, setProductEditorOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState<any | null>(null)
+  const [productForm, setProductForm] = useState({ name: '', price: '', categoryId: '', tag: '', imageUrl: '' })
+  const [productImageFile, setProductImageFile] = useState<File | null>(null)
 
-  useEffect(() => {
-    async function fetchData() {
-      setIsLoading(true)
-      try {
-        // Fetch orders joined with profiles
-        const { data: ordersData } = await supabase
-          .from('pedidos')
-          .select('id, monto_total, estado, creado_el, perfiles(nombre, apellido)')
-          .order('creado_el', { ascending: false })
-          
-        if (ordersData) setDbOrders(ordersData)
+  async function loadData() {
+    setIsLoading(true)
+    setDbError('')
+    try {
+      const [ordersResult, productsResult, categoriesResult, clientsResult, returnsResult] = await Promise.all([
+        supabase.from('pedidos').select('id, monto_total, estado, creado_el, perfiles(nombre, apellido)').order('creado_el', { ascending: false }),
+        fetchProductsFromSupabase(),
+        supabase.from('categorias').select('id, nombre').order('nombre'),
+        supabase.from('perfiles').select('id, nombre, apellido, correo, creado_el, pedidos(monto_total)'),
+        supabase.from('devoluciones').select('id, codigo_devolucion, pedido_id, motivo, estado, creado_el, perfiles(nombre, apellido), variantes_producto(productos(nombre))').order('creado_el', { ascending: false }),
+      ])
 
-        // Fetch products joined with categories
-        const { data: productsData } = await supabase
-          .from('productos')
-          .select('id, nombre, precio_base, etiqueta, categorias(nombre)')
-          
-        if (productsData) setDbProducts(productsData)
-
-        // Fetch clients with their orders
-        const { data: clientsData } = await supabase
-          .from('perfiles')
-          .select('id, nombre, apellido, correo, creado_el, pedidos(monto_total)')
-          
-        if (clientsData) setDbClients(clientsData)
-
-        // Fetch returns
-        const { data: returnsData } = await supabase
-          .from('devoluciones')
-          .select('id, codigo_devolucion, pedido_id, motivo, estado, creado_el, perfiles(nombre, apellido), variantes_producto(productos(nombre))')
-          .order('creado_el', { ascending: false })
-
-        if (returnsData) setDbReturns(returnsData)
-      } catch (error) {
-        console.error('Error fetching data:', error)
-      } finally {
-        setIsLoading(false)
-      }
+      const errors = [ordersResult.error, productsResult.error, categoriesResult.error, clientsResult.error, returnsResult.error].filter(Boolean)
+      if (errors.length) setDbError(errors.map(error => error?.message).join(' '))
+      setDbOrders(ordersResult.data ?? [])
+      setDbProducts(productsResult.data ?? [])
+      setDbCategories(categoriesResult.data ?? [])
+      setDbClients(clientsResult.data ?? [])
+      setDbReturns(returnsResult.data ?? [])
+    } catch (error) {
+      setDbError(error instanceof Error ? error.message : 'No se pudieron cargar los datos administrativos.')
+    } finally {
+      setIsLoading(false)
     }
-    
-    fetchData()
-  }, [])
+  }
+
+  useEffect(() => { void loadData() }, [])
+
+  function openProductEditor(product?: any) {
+    setEditingProduct(product ?? null)
+    setProductImageFile(null)
+    setProductForm(product ? {
+      name: product.nombre,
+      price: String(Number(product.precio_base) / PRICE_STORAGE_SCALE),
+      categoryId: product.categorias?.id ?? '',
+      tag: product.etiqueta ?? '',
+      imageUrl: product.imagen_url ?? '',
+    } : { name: '', price: '', categoryId: '', tag: '', imageUrl: '' })
+    setProductEditorOpen(true)
+  }
+
+  async function saveProduct(event: React.FormEvent) {
+    event.preventDefault()
+    setDbError('')
+    if (productImageFile && !['image/jpeg', 'image/png', 'image/webp'].includes(productImageFile.type)) {
+      setDbError('La imagen debe ser JPG, PNG o WebP.')
+      return
+    }
+    if (productImageFile && productImageFile.size > 5 * 1024 * 1024) {
+      setDbError('La imagen no puede superar los 5 MB.')
+      return
+    }
+    const payload: Record<string, string | number> = {
+      nombre: productForm.name.trim(),
+      precio_base: Number(productForm.price) * PRICE_STORAGE_SCALE,
+      etiqueta: productForm.tag.trim(),
+    }
+    if (!editingProduct) {
+      payload.slug = `${createSlug(productForm.name)}-${crypto.randomUUID().slice(0, 8)}`
+      payload.genero = 'unisex'
+    }
+    let uploadedImagePath = ''
+    if (productImageFile) {
+      const extension = productImageFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
+      uploadedImagePath = `${crypto.randomUUID()}.${extension}`
+      const { error } = await supabase.storage.from('productos').upload(uploadedImagePath, productImageFile, {
+        cacheControl: '3600',
+        contentType: productImageFile.type,
+        upsert: false,
+      })
+      if (error) {
+        setDbError(`No se pudo subir la imagen: ${error.message}. Verifica que ejecutaste la configuración de Storage en Supabase.`)
+        return
+      }
+      payload.imagen_url = supabase.storage.from('productos').getPublicUrl(uploadedImagePath).data.publicUrl
+    } else if (productForm.imageUrl.trim()) {
+      payload.imagen_url = productForm.imageUrl.trim()
+    }
+    let categoryId = productForm.categoryId
+    if (categoryId.startsWith('new:')) {
+      const categoryName = categoryId.slice(4)
+      const categorySlug = categoryName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+      const { data: category, error } = await supabase
+        .from('categorias')
+        .insert({
+          nombre: categoryName,
+          slug: categorySlug,
+          tipo_ranura: CATEGORY_SLOT_TYPES[categoryName],
+        })
+        .select('id')
+        .single()
+      if (error || !category) {
+        if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+        setDbError(`No se pudo crear la categoría: ${error?.message ?? 'Respuesta vacía de Supabase.'}`)
+        return
+      }
+      categoryId = String(category.id)
+    }
+    if (categoryId) payload.categoria_id = categoryId
+
+    let result = editingProduct
+      ? await supabase.from('productos').update(payload).eq('id', editingProduct.id)
+      : await supabase.from('productos').insert(payload)
+
+    let imageWasSkipped = false
+    const missingImageColumn = result.error?.message.includes('imagen_url')
+      && (result.error.code === '42703' || result.error.code === 'PGRST204')
+    if (missingImageColumn && payload.imagen_url) {
+      if (productImageFile) {
+        await supabase.storage.from('productos').remove([uploadedImagePath])
+        await loadData()
+        if (categoryId) setProductForm(form => ({ ...form, categoryId }))
+        setDbError('La base no tiene la columna imagen_url. Ejecuta la actualización SQL de productos y vuelve a guardar la imagen.')
+        return
+      }
+      delete payload.imagen_url
+      result = editingProduct
+        ? await supabase.from('productos').update(payload).eq('id', editingProduct.id)
+        : await supabase.from('productos').insert(payload)
+      imageWasSkipped = !result.error
+    }
+
+    if (result.error) {
+      if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+      setDbError(`No se pudo guardar el producto: ${result.error.message}`)
+      return
+    }
+
+    setProductEditorOpen(false)
+    await loadData()
+    await onProductsChanged()
+    if (imageWasSkipped) setDbError('Producto guardado. Para guardar su imagen, ejecuta la actualización SQL de Supabase.')
+  }
+
+  async function deleteProduct(product: any) {
+    if (!window.confirm(`¿Eliminar ${product.nombre}?`)) return
+    const { error } = await supabase.from('productos').delete().eq('id', product.id)
+    if (error) {
+      setDbError(`No se pudo eliminar el producto: ${error.message}`)
+      return
+    }
+    await loadData()
+    await onProductsChanged()
+  }
+
+  async function updateOrderStatus(orderId: string, status: string) {
+    const { error } = await supabase.from('pedidos').update({ estado: status }).eq('id', orderId)
+    if (error) {
+      setDbError(`No se pudo actualizar el pedido: ${error.message}`)
+      return
+    }
+    await loadData()
+  }
+
+  function exportOrders() {
+    const rows = [
+      ['Pedido', 'Fecha', 'Cliente', 'Total', 'Estado'],
+      ...orderRows.map(row => [row.order, row.date, row.customer, row.total, row.status]),
+    ]
+    const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    link.download = 'pedidos-velour.csv'
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
 
   const handleLogout = () => {
     localStorage.removeItem(SESSION_STORAGE_KEY)
@@ -2410,7 +2576,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     { key: 'returns', label: 'Devoluciones', icon: '↺' },
   ]
 
-  const totalIngresos = dbOrders.reduce((sum, order) => sum + Number(order.monto_total), 0)
+  const totalIngresos = dbOrders.reduce((sum, order) => sum + Number(order.monto_total) / PRICE_STORAGE_SCALE, 0)
   const stats = [
     { label: 'Ingresos totales', value: formatPrice(totalIngresos), delta: 'N/A', tone: 'amber' },
     { label: 'Pedidos totales', value: dbOrders.length.toString(), delta: 'N/A', tone: 'slate' },
@@ -2418,30 +2584,32 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
   ]
 
   const orderRows = dbOrders.map(order => ({
+    id: order.id,
     order: order.id.substring(0, 8),
     customer: order.perfiles ? `${order.perfiles.nombre || ''} ${order.perfiles.apellido || ''}`.trim() : 'Desconocido',
-    date: new Date(order.creado_el).toLocaleDateString('es-CO'),
-    total: formatPrice(Number(order.monto_total)),
+    date: new Date(order.creado_el).toLocaleDateString('es-PE'),
+    total: formatPrice(Number(order.monto_total) / PRICE_STORAGE_SCALE),
     status: order.estado ? order.estado.charAt(0).toUpperCase() + order.estado.slice(1) : 'Desconocido'
   }))
 
   const productRows = dbProducts.map(prod => ({
+    id: prod.id,
     product: prod.nombre,
     category: prod.categorias ? prod.categorias.nombre : 'Sin categoría',
-    price: formatPrice(Number(prod.precio_base)),
+    price: formatPrice(Number(prod.precio_base) / PRICE_STORAGE_SCALE),
     tag: prod.etiqueta || 'Base',
     actions: 'Ver'
   }))
 
   const clientRows = dbClients.map(client => {
     const ordersCount = client.pedidos ? client.pedidos.length : 0;
-    const totalSpent = client.pedidos ? client.pedidos.reduce((sum: number, p: any) => sum + Number(p.monto_total), 0) : 0;
+    const totalSpent = client.pedidos ? client.pedidos.reduce((sum: number, p: any) => sum + Number(p.monto_total) / PRICE_STORAGE_SCALE, 0) : 0;
     return {
       client: `${client.nombre || ''} ${client.apellido || ''}`.trim() || 'Desconocido',
       email: client.correo,
       orders: ordersCount,
       total: formatPrice(totalSpent),
-      since: new Date(client.creado_el).toLocaleDateString('es-CO'),
+      since: new Date(client.creado_el).toLocaleDateString('es-PE'),
       actions: 'Ver'
     }
   })
@@ -2452,8 +2620,8 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       order: '#1042',
       client: 'Laura Silva',
       email: 'laura.silva@email.com',
-      phone: '+57 310 456 7890',
-      address: 'Cra. 8 #120-45, Bogotá',
+      phone: '+51 999 456 789',
+      address: 'Av. Arequipa 120, Lima',
       product: 'Chaqueta Oversized',
       reason: 'Talla incorrecta',
       date: '13 Ago 2026',
@@ -2467,8 +2635,8 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       order: '#1036',
       client: 'Julián Gómez',
       email: 'julian.gomez@email.com',
-      phone: '+57 315 222 4411',
-      address: 'Cl. 80 #23-90, Medellín',
+      phone: '+51 987 222 441',
+      address: 'Av. Ejército 230, Arequipa',
       product: 'Pantalón Wide Leg',
       reason: 'Defecto de material',
       date: '12 Ago 2026',
@@ -2482,8 +2650,8 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       order: '#1028',
       client: 'Camila Torres',
       email: 'camila.torres@email.com',
-      phone: '+57 300 760 9912',
-      address: 'Av. 68 #50-35, Cali',
+      phone: '+51 989 760 991',
+      address: 'Jr. El Sol 350, Cusco',
       product: 'Vestido Fluido',
       reason: 'Cambio de opinión',
       date: '11 Ago 2026',
@@ -2500,7 +2668,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     client: ret.perfiles ? `${ret.perfiles.nombre || ''} ${ret.perfiles.apellido || ''}`.trim() : 'Desconocido',
     product: ret.variantes_producto?.productos?.nombre || 'Producto desconocido',
     reason: ret.motivo,
-    date: new Date(ret.creado_el).toLocaleDateString('es-CO'),
+    date: new Date(ret.creado_el).toLocaleDateString('es-PE'),
     status: ret.estado ? ret.estado.charAt(0).toUpperCase() + ret.estado.slice(1) : 'Desconocido',
     action: 'Ver',
     email: '',
@@ -2527,7 +2695,14 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
     productImage: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&h=1000&fit=crop&auto=format'
   }
 
-  const sales = [48, 64, 58, 82, 96, 78, 110, 125, 116, 88, 132, 146]
+  const sales = Array.from({ length: 12 }, () => 0)
+  dbOrders.forEach(order => {
+    const orderDate = new Date(order.creado_el)
+    if (orderDate.getFullYear() === new Date().getFullYear()) {
+      sales[orderDate.getMonth()] += Number(order.monto_total) / PRICE_STORAGE_SCALE || 0
+    }
+  })
+  const maxMonthlySales = Math.max(...sales, 1)
 
   const getStatusClasses = (status: string) => {
     switch (status) {
@@ -2567,7 +2742,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
           <p className="text-[10px] font-800 uppercase tracking-[0.3em] text-[#C9A96E]">Resumen General</p>
           <h1 className="font-display text-4xl text-[#0D0D0D] mt-2">Dashboard</h1>
         </div>
-        <button className="bg-gradient-to-r from-[#0D0D0D] to-[#2a2a2a] text-[#C9A96E] px-6 py-3 text-[10px] font-800 uppercase tracking-widest rounded-full shadow-xl shadow-black/10 hover:shadow-2xl hover:scale-105 transition-all duration-300">
+          <button onClick={exportOrders} className="bg-gradient-to-r from-[#0D0D0D] to-[#2a2a2a] text-[#C9A96E] px-6 py-3 text-[10px] font-800 uppercase tracking-widest rounded-full shadow-xl shadow-black/10 hover:shadow-2xl hover:scale-105 transition-all duration-300">
           Exportar Datos
         </button>
       </div>
@@ -2582,7 +2757,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
                 {stat.delta}
               </span>
             </div>
-            <div className="text-5xl font-display text-[#0D0D0D] relative z-10 tracking-tight">{stat.value === '0' || stat.value === '$0 COP' ? (dbOrders.length === 0 ? '...' : stat.value) : stat.value}</div>
+              <div className="text-5xl font-display text-[#0D0D0D] relative z-10 tracking-tight">{isLoading ? '...' : stat.value}</div>
           </div>
         ))}
       </div>
@@ -2593,7 +2768,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
             <p className="text-[10px] font-800 uppercase tracking-[0.3em] text-[#6B6860]">Rendimiento Anual</p>
             <h2 className="font-display text-3xl text-[#0D0D0D] mt-2">Ventas Mensuales</h2>
           </div>
-          <span className="px-5 py-2 bg-[#0D0D0D] text-[#C9A96E] text-xs font-700 rounded-full shadow-lg">2026</span>
+          <span className="px-5 py-2 bg-[#0D0D0D] text-[#C9A96E] text-xs font-700 rounded-full shadow-lg">{new Date().getFullYear()}</span>
         </div>
 
         <div className="flex items-end justify-between h-72 gap-2 sm:gap-4 relative z-10">
@@ -2602,7 +2777,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
               <div className="w-full flex items-end justify-center h-56 relative group/bar">
                 <div
                   className="w-full max-w-[48px] rounded-t-2xl bg-gradient-to-t from-[#0D0D0D] to-[#3a3a3a] shadow-lg transition-all duration-500 group-hover/bar:from-[#C9A96E] group-hover/bar:to-[#F3D79F] group-hover/bar:scale-y-105 origin-bottom relative overflow-hidden"
-                  style={{ height: `${value === 0 ? 4 : value}%` }}
+                  style={{ height: `${value === 0 ? 4 : Math.max(8, value / maxMonthlySales * 100)}%` }}
                 >
                   <div className="absolute inset-0 bg-white/20 translate-y-full group-hover/bar:translate-y-0 transition-transform duration-700 ease-out"></div>
                 </div>
@@ -2622,8 +2797,8 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
           <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Operaciones</p>
           <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Pedidos recientes</h1>
         </div>
-        <button className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase tracking-wide text-[#0D0D0D] hover:border-[#0D0D0D] transition-colors">
-          Ver todos
+        <button onClick={() => void loadData()} className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase tracking-wide text-[#0D0D0D] hover:border-[#0D0D0D] transition-colors">
+          Actualizar
         </button>
       </div>
 
@@ -2636,16 +2811,22 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
               <th className="px-4 py-3 font-600">Fecha</th>
               <th className="px-4 py-3 font-600">Total</th>
               <th className="px-4 py-3 font-600">Estado</th>
+              <th className="px-4 py-3 font-600">Actualizar estado</th>
             </tr>
           </thead>
           <tbody>
-            {orderRows.map(row => (
-              <tr key={row.order} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+            {orderRows.map((row, index) => (
+              <tr key={`${row.order}-${index}`} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
                 <td className="px-4 py-3 font-600">{row.order}</td>
                 <td className="px-4 py-3">{row.customer}</td>
                 <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
                 <td className="px-4 py-3 font-600">{row.total}</td>
                 <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(row.status)}`}>{row.status}</span></td>
+                <td className="px-4 py-3">
+                  <select aria-label={`Estado del pedido ${row.order}`} value={dbOrders[index]?.estado ?? ''} onChange={event => void updateOrderStatus(row.id, event.target.value)} className="border border-[#DDD9D0] bg-white px-2 py-1 text-xs">
+                    {['pendiente', 'en preparación', 'enviado', 'entregado', 'cancelado'].map(status => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -2661,7 +2842,7 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
           <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Catálogo</p>
           <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Productos</h1>
         </div>
-        <button className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
+        <button onClick={() => openProductEditor()} className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
           Añadir producto
         </button>
       </div>
@@ -2679,20 +2860,22 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
           </thead>
           <tbody>
             {productRows.map(row => (
-              <tr key={row.product} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+              <tr key={row.id} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
                 <td className="px-4 py-3 font-600">{row.product}</td>
                 <td className="px-4 py-3">{row.category}</td>
                 <td className="px-4 py-3">{row.price}</td>
                 <td className="px-4 py-3"><span className="inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full bg-[#F2EFE9] text-[#0D0D0D]">{row.tag}</span></td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
-                    <button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">{row.actions === 'Añadir' ? 'Añadir' : 'Eliminar'}</button>
+                    <button onClick={() => openProductEditor(dbProducts.find(product => product.id === row.id))} className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">Editar</button>
+                    <button onClick={() => void deleteProduct(dbProducts.find(product => product.id === row.id))} className="text-xs font-600 text-red-700 hover:text-red-900">Eliminar</button>
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {productRows.length === 0 && renderTableEmptyState(isLoading ? 'Cargando productos…' : 'No hay productos registrados')}
       </div>
     </div>
   )
@@ -2911,12 +3094,54 @@ function AdminDashboardPage({ setPage }: { setPage: (p: Page) => void }) {
       </aside>
 
       <main className="flex-1 p-8 md:p-12 h-[calc(100vh-4rem)] overflow-y-auto relative z-10 scrollbar-hide">
+        {dbError && <div role="alert" className="mb-6 border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{dbError}</div>}
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'orders' && renderOrders()}
         {activeTab === 'products' && renderProducts()}
         {activeTab === 'clients' && renderClients()}
         {activeTab === 'returns' && renderReturns()}
       </main>
+
+      {productEditorOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setProductEditorOpen(false) }}>
+          <form onSubmit={saveProduct} className="w-full max-w-lg space-y-4 bg-white p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="product-editor-title">
+            <div className="flex items-center justify-between">
+              <h2 id="product-editor-title" className="font-display text-2xl text-[#0D0D0D]">{editingProduct ? 'Editar producto' : 'Nuevo producto'}</h2>
+              <button type="button" onClick={() => setProductEditorOpen(false)} aria-label="Cerrar" className="px-2 py-1 text-lg">×</button>
+            </div>
+            <label className="block text-xs font-600 uppercase text-[#6B6860]">Nombre
+              <input required value={productForm.name} onChange={event => setProductForm(form => ({ ...form, name: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs font-600 uppercase text-[#6B6860]">Precio (S/)
+                <input required type="number" min="0" step="0.01" value={productForm.price} onChange={event => setProductForm(form => ({ ...form, price: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
+              </label>
+              <label className="block text-xs font-600 uppercase text-[#6B6860]">Categoría
+                <select required value={productForm.categoryId} onChange={event => setProductForm(form => ({ ...form, categoryId: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] bg-white px-3 py-2 text-sm normal-case">
+                  <option value="">Seleccionar</option>
+                  {dbCategories.map(category => <option key={category.id} value={category.id}>{category.nombre}</option>)}
+                  {CATEGORIES.filter(category => category !== 'Todos' && !dbCategories.some(item => item.nombre.toLowerCase() === category.toLowerCase())).map(category => (
+                    <option key={`new:${category}`} value={`new:${category}`}>{category} (crear categoría)</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="block text-xs font-600 uppercase text-[#6B6860]">Etiqueta
+              <input value={productForm.tag} onChange={event => setProductForm(form => ({ ...form, tag: event.target.value }))} placeholder="Nuevo" className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
+            </label>
+            <label className="block text-xs font-600 uppercase text-[#6B6860]">Subir imagen desde tu equipo
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setProductImageFile(event.target.files?.[0] ?? null)} className="mt-1 block w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case file:mr-3 file:border-0 file:bg-[#F2EFE9] file:px-3 file:py-1.5" />
+            </label>
+            <label className="block text-xs font-600 uppercase text-[#6B6860]">O usa una URL de imagen
+              <input type="url" value={productForm.imageUrl} onChange={event => setProductForm(form => ({ ...form, imageUrl: event.target.value }))} placeholder="https://..." className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
+            </label>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setProductEditorOpen(false)} className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase">Cancelar</button>
+              <button type="submit" className="bg-[#0D0D0D] px-4 py-2 text-xs font-600 uppercase text-white hover:bg-[#C9A96E] hover:text-[#0D0D0D]">Guardar producto</button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
@@ -3004,6 +3229,27 @@ function ForgotPasswordPage({ setPage }: { setPage: (p: Page) => void }) {
 export default function App() {
   const [page, setPage] = useState<Page>('home')
   const [cart, setCart] = useState<CartItem[]>([])
+  const [products, setProducts] = useState<Product[]>(PRODUCTS)
+
+  const loadProducts = useCallback(async () => {
+    const { data, error } = await fetchProductsFromSupabase()
+
+    if (error) {
+      console.error('Error cargando productos:', error)
+      return
+    }
+
+    setProducts((data ?? []).map((product: any, index: number) => ({
+      id: product.id,
+      name: product.nombre,
+      category: product.categorias?.nombre ?? 'Sin categoría',
+      price: Number(product.precio_base) / PRICE_STORAGE_SCALE,
+      img: product.imagen_url || PRODUCTS[index % PRODUCTS.length].img,
+      tag: product.etiqueta || undefined,
+    })))
+  }, [])
+
+  useEffect(() => { void loadProducts() }, [loadProducts])
 
   const addToCart = useCallback((product: Product, size: string) => {
     setCart(c => {
@@ -3031,16 +3277,16 @@ export default function App() {
       {!hideNav && <Navbar page={page} setPage={setPage} cartCount={cartCount} />}
 
       <main>
-        {page === 'home' && <HomePage setPage={setPage} />}
-        {page === 'products' && <ProductsPage setPage={setPage} addToCart={addToCart} />}
+        {page === 'home' && <HomePage setPage={setPage} products={products} />}
+        {page === 'products' && <ProductsPage setPage={setPage} addToCart={addToCart} products={products} />}
         {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={setPage} onCheckout={() => setPage('checkout')} />}
         {page === 'login' && <LoginPage setPage={setPage} />}
         {page === 'register' && <RegisterPage setPage={setPage} />}
         {page === 'forgot-password' && <ForgotPasswordPage setPage={setPage} />}
         {page === 'avatar' && <AvatarPage setPage={setPage} />}
         {page === 'tryon' && <TryOnPage setPage={setPage} />}
-        {page === 'checkout' && <CheckoutPage cart={cart} onSuccess={handleCheckoutSuccess} />}
-        {page === 'admin' && <AdminDashboardPage setPage={setPage} />}
+        {page === 'checkout' && <CheckoutPage cart={cart} onSuccess={handleCheckoutSuccess} setPage={setPage} />}
+        {page === 'admin' && <AdminDashboardPage setPage={setPage} onProductsChanged={loadProducts} />}
       </main>
 
       <WhatsAppFAB />
