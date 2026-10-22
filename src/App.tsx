@@ -2839,7 +2839,7 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
                 <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(row.status)}`}>{row.status}</span></td>
                 <td className="px-4 py-3">
                   <select aria-label={`Estado del pedido ${row.order}`} value={dbOrders[index]?.estado ?? ''} onChange={event => void updateOrderStatus(row.id, event.target.value)} className="border border-[#DDD9D0] bg-white px-2 py-1 text-xs">
-                    {['pendiente', 'en preparación', 'enviado', 'entregado', 'cancelado'].map(status => <option key={status} value={status}>{status}</option>)}
+                    {['pendiente', 'pagado', 'enviado', 'completado', 'cancelado'].map(status => <option key={status} value={status}>{status}</option>)}
                   </select>
                 </td>
               </tr>
