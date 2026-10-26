@@ -1139,6 +1139,11 @@ function RegisterPage({ setPage, returnPage, onAuthenticated }: { setPage: (p: P
       storeSessionInfo({ email, role: form.role })
       onAuthenticated()
       setPage(form.role === 'admin' ? 'admin' : returnPage ?? 'home')
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
+      if (form.role !== 'admin') {
+        localStorage.setItem('velour-temp-measurements', JSON.stringify(measurements))
+      }
+      setPage(form.role === 'admin' ? 'admin' : 'avatar')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo completar el registro.'
       setError(message)
@@ -1415,16 +1420,28 @@ function AvatarPage({ setPage }: { setPage: (p: Page) => void }) {
     }
 
     setStep('generating')
-    // Animate progress bar
-    if (progressRef.current) {
-      gsap.fromTo(progressRef.current, { width: '0%' }, { width: '100%', duration: 2.5, ease: 'power1.inOut' })
-    }
-    setTimeout(() => setStep('done'), 2800)
   }
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('velour-temp-measurements')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        setMeasurements(parsed)
+        setGender(parsed.gender || 'F')
+        setStep('generating')
+        localStorage.removeItem('velour-temp-measurements')
+      }
+    } catch {}
+  }, [])
 
   useEffect(() => {
     if (step === 'done' && avatarRef.current) {
       gsap.fromTo(avatarRef.current, { opacity: 0, scale: 0.8, y: 30 }, { opacity: 1, scale: 1, y: 0, duration: 0.7, ease: 'back.out(1.4)' })
+    } else if (step === 'generating' && progressRef.current) {
+      gsap.fromTo(progressRef.current, { width: '0%' }, { width: '100%', duration: 2.5, ease: 'power1.inOut' })
+      const t = setTimeout(() => setStep('done'), 2800)
+      return () => clearTimeout(t)
     }
   }, [step])
 
@@ -3140,6 +3157,20 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
                 </tr>
               )
             })}
+            {orderRows.map((row, index) => (
+              <tr key={`${row.order}-${index}`} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+                <td className="px-4 py-3 font-600">{row.order}</td>
+                <td className="px-4 py-3">{row.customer}</td>
+                <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
+                <td className="px-4 py-3 font-600">{row.total}</td>
+                <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(row.status)}`}>{row.status}</span></td>
+                <td className="px-4 py-3">
+                  <select aria-label={`Estado del pedido ${row.order}`} value={dbOrders[index]?.estado ?? ''} onChange={event => void updateOrderStatus(row.id, event.target.value)} className="border border-[#DDD9D0] bg-white px-2 py-1 text-xs">
+                    {['pendiente', 'pagado', 'enviado', 'completado', 'cancelado'].map(status => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
