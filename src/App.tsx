@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { Session } from '@supabase/supabase-js'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { supabase } from './lib/supabase'
@@ -7,7 +8,7 @@ gsap.registerPlugin(ScrollTrigger)
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'avatar' | 'tryon' | 'checkout' | 'admin' | 'forgot-password'
+type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'account' | 'avatar' | 'tryon' | 'checkout' | 'admin' | 'forgot-password'
 
 interface Product {
   id: number | string
@@ -15,6 +16,7 @@ interface Product {
   category: string
   price: number
   img: string
+  stock?: number
   tag?: string
 }
 
@@ -45,6 +47,7 @@ interface StoredUser {
 }
 
 interface ReturnRow {
+  id?: string
   code: string
   order: string
   client: string
@@ -74,6 +77,26 @@ const DEFAULT_MEASUREMENTS: UserMeasurements = {
 const USERS_STORAGE_KEY = 'velour-users'
 const SESSION_STORAGE_KEY = 'velour-session'
 const ADMIN_INVITATION_CODE = 'VELOUR-ADMIN'
+
+interface SessionInfo {
+  email: string
+  role: UserRole
+}
+
+function getSessionInfo(): SessionInfo | null {
+  try {
+    const session = JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) || 'null')
+    if (typeof session?.email !== 'string' || !['client', 'admin'].includes(session.role)) return null
+    return { email: session.email, role: session.role }
+  } catch {
+    return null
+  }
+}
+
+function storeSessionInfo(session: SessionInfo) {
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
+  window.dispatchEvent(new Event('velour-session-change'))
+}
 
 function getStoredUsers(): StoredUser[] {
   try {
@@ -144,7 +167,7 @@ function createSlug(value: string) {
 async function fetchProductsFromSupabase() {
   const withImages = await supabase
     .from('productos')
-    .select('id, nombre, precio_base, etiqueta, imagen_url, categorias(id, nombre)')
+    .select('id, nombre, precio_base, stock, etiqueta, imagen_url, categorias(id, nombre)')
     .order('id')
 
   const missingImageColumn = withImages.error?.message.includes('imagen_url')
@@ -155,7 +178,7 @@ async function fetchProductsFromSupabase() {
 
   return supabase
     .from('productos')
-    .select('id, nombre, precio_base, etiqueta, categorias(id, nombre)')
+    .select('id, nombre, precio_base, stock, etiqueta, categorias(id, nombre)')
     .order('id')
 }
 
@@ -178,7 +201,7 @@ function useGsapEntrance(deps: unknown[] = []) {
 
 // ─── Navbar ──────────────────────────────────────────────────────────────────
 
-function Navbar({ page, setPage, cartCount }: { page: Page; setPage: (p: Page) => void; cartCount: number }) {
+function Navbar({ page, setPage, cartCount, session }: { page: Page; setPage: (p: Page) => void; cartCount: number; session: SessionInfo | null }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -223,12 +246,12 @@ function Navbar({ page, setPage, cartCount }: { page: Page; setPage: (p: Page) =
         {/* Actions */}
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setPage('login')}
+            onClick={() => setPage(session ? 'account' : 'login')}
             className="hidden md:flex items-center gap-1.5 text-sm font-500 text-[#6B6860] hover:text-[#0D0D0D] transition-colors"
-            aria-label="Iniciar sesión"
+            aria-label={session ? 'Mi cuenta' : 'Iniciar sesión'}
           >
             <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            <span>Cuenta</span>
+            <span>{session ? 'Mi cuenta' : 'Cuenta'}</span>
           </button>
 
           <button
@@ -273,10 +296,10 @@ function Navbar({ page, setPage, cartCount }: { page: Page; setPage: (p: Page) =
             </button>
           ))}
           <button
-            onClick={() => { setPage('login'); setMenuOpen(false) }}
+            onClick={() => { setPage(session ? 'account' : 'login'); setMenuOpen(false) }}
             className="text-left text-sm font-500 py-2 text-[#6B6860]"
           >
-            Iniciar sesión
+            {session ? 'Mi cuenta' : 'Iniciar sesión'}
           </button>
         </div>
       )}
@@ -512,14 +535,16 @@ function ProductCard({
   product, onAddToCart, onTryOn, compact = false
 }: {
   product: Product
-  onAddToCart?: (p: Product, size: string) => void
+  onAddToCart?: (p: Product, size: string) => boolean
   onTryOn?: () => void
   compact?: boolean
 }) {
   const [hovered, setHovered] = useState(false)
   const [selectedSize, setSelectedSize] = useState('M')
   const [added, setAdded] = useState(false)
+  const [stockError, setStockError] = useState('')
   const overlayRef = useRef<HTMLDivElement>(null)
+  const availableStock = product.stock ?? 0
 
   useEffect(() => {
     if (!overlayRef.current) return
@@ -533,9 +558,12 @@ function ProductCard({
 
   function handleAdd() {
     if (onAddToCart) {
-      onAddToCart(product, selectedSize)
-      setAdded(true)
-      setTimeout(() => setAdded(false), 1500)
+      const wasAdded = onAddToCart(product, selectedSize)
+      setStockError(wasAdded ? '' : 'Stock insuficiente')
+      if (wasAdded) {
+        setAdded(true)
+        setTimeout(() => setAdded(false), 1500)
+      }
     }
   }
 
@@ -576,9 +604,10 @@ function ProductCard({
             {onAddToCart && (
               <button
                 onClick={e => { e.stopPropagation(); handleAdd() }}
-                className={`flex-1 py-2.5 text-xs font-600 tracking-wide uppercase transition-colors ${added ? 'bg-[#C9A96E] text-[#0D0D0D]' : 'bg-white text-[#0D0D0D] hover:bg-[#C9A96E]'}`}
+                disabled={availableStock < 1}
+                className={`flex-1 py-2.5 text-xs font-600 tracking-wide uppercase transition-colors disabled:cursor-not-allowed disabled:bg-[#DDD9D0] disabled:text-[#6B6860] ${added ? 'bg-[#C9A96E] text-[#0D0D0D]' : 'bg-white text-[#0D0D0D] hover:bg-[#C9A96E]'}`}
               >
-                {added ? '✓ Agregado' : 'Agregar'}
+                {availableStock < 1 ? 'Agotado' : added ? '✓ Agregado' : 'Agregar'}
               </button>
             )}
             {onTryOn && (
@@ -590,6 +619,11 @@ function ProductCard({
               </button>
             )}
           </div>
+          {onAddToCart && (
+            <p className="mt-2 text-[10px] text-[#6B6860]">
+              {stockError || `${availableStock} unidades disponibles`}
+            </p>
+          )}
         </div>
       </div>
 
@@ -604,7 +638,7 @@ function ProductCard({
 
 // ─── Products Page ────────────────────────────────────────────────────────────
 
-function ProductsPage({ setPage, addToCart, products }: { setPage: (p: Page) => void; addToCart: (p: Product, size: string) => void; products: Product[] }) {
+function ProductsPage({ setPage, addToCart, products }: { setPage: (p: Page) => void; addToCart: (p: Product, size: string) => boolean; products: Product[] }) {
   const [activeCategory, setActiveCategory] = useState('Todos')
   const [search, setSearch] = useState('')
   const gridRef = useRef<HTMLDivElement>(null)
@@ -695,6 +729,10 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
 }) {
   const pageRef = useGsapEntrance([])
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0)
+  const stockIsValid = cart.every(item => (
+    cart.filter(cartItem => cartItem.id === item.id).reduce((sum, cartItem) => sum + cartItem.qty, 0)
+    <= (item.stock ?? 0)
+  ))
 
   function remove(id: Product['id'], size: string) {
     setCart(c => c.filter(i => !(i.id === id && i.size === size)))
@@ -703,7 +741,7 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
   function updateQty(id: Product['id'], size: string, delta: number) {
     setCart(c => c.map(i => {
       if (i.id === id && i.size === size) {
-        const qty = Math.max(1, i.qty + delta)
+        const qty = Math.max(1, Math.min(i.stock ?? 0, i.qty + delta))
         return { ...i, qty }
       }
       return i
@@ -740,7 +778,7 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
                       <div className="flex items-center border border-[#DDD9D0]">
                         <button onClick={() => updateQty(item.id, item.size, -1)} className="w-7 h-7 flex items-center justify-center text-[#6B6860] hover:text-[#0D0D0D] hover:bg-[#F2EFE9] transition-colors" aria-label="Reducir cantidad">−</button>
                         <span className="w-8 text-center text-sm font-500">{item.qty}</span>
-                        <button onClick={() => updateQty(item.id, item.size, 1)} className="w-7 h-7 flex items-center justify-center text-[#6B6860] hover:text-[#0D0D0D] hover:bg-[#F2EFE9] transition-colors" aria-label="Aumentar cantidad">+</button>
+                        <button onClick={() => updateQty(item.id, item.size, 1)} disabled={item.qty >= (item.stock ?? 0)} className="w-7 h-7 flex items-center justify-center text-[#6B6860] hover:text-[#0D0D0D] hover:bg-[#F2EFE9] transition-colors disabled:cursor-not-allowed disabled:opacity-40" aria-label="Aumentar cantidad">+</button>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="text-sm font-600 text-[#0D0D0D]">{formatPrice(item.price * item.qty)}</span>
@@ -772,7 +810,8 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
               {total >= 200 && (
                 <p className="text-[#C9A96E] text-xs mb-4 text-center">◆ Envío gratis aplicado</p>
               )}
-              <button onClick={onCheckout} className="w-full bg-[#C9A96E] text-[#0D0D0D] py-3.5 text-sm font-700 tracking-wide uppercase hover:bg-[#b8955c] transition-colors mb-3">
+              {!stockIsValid && <p className="mb-3 text-xs text-rose-300">El stock disponible cambió. Ajusta las cantidades antes de pagar.</p>}
+              <button onClick={onCheckout} disabled={!stockIsValid} className="w-full bg-[#C9A96E] text-[#0D0D0D] py-3.5 text-sm font-700 tracking-wide uppercase hover:bg-[#b8955c] transition-colors mb-3 disabled:cursor-not-allowed disabled:opacity-50">
                 Proceder al pago →
               </button>
               <button onClick={() => setPage('products')} className="w-full border border-white/20 text-white/70 py-3 text-xs font-500 tracking-wide uppercase hover:border-white/40 transition-colors">
@@ -788,7 +827,7 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
 
 // ─── Login Page ───────────────────────────────────────────────────────────────
 
-function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
+function LoginPage({ setPage, returnPage, onAuthenticated }: { setPage: (p: Page) => void; returnPage: Page | null; onAuthenticated: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<UserRole>('client')
@@ -847,12 +886,13 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
         return
       }
 
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-        email: authData.user.email,
+      storeSessionInfo({
+        email: authData.user.email || normalizedEmail,
         role: profileRole === 'admin' ? 'admin' : 'client',
-      }))
+      })
 
-      setPage(profileRole === 'admin' ? 'admin' : 'avatar')
+      onAuthenticated()
+      setPage(profileRole === 'admin' ? 'admin' : returnPage ?? 'home')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al iniciar sesión.'
       const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : ''
@@ -985,11 +1025,70 @@ function LoginPage({ setPage }: { setPage: (p: Page) => void }) {
   )
 }
 
+function AccountPage({ session, setPage, onLogout }: { session: SessionInfo | null; setPage: (page: Page) => void; onLogout: () => Promise<void> }) {
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleLogout() {
+    setLoading(true)
+    setError('')
+    try {
+      await onLogout()
+    } catch (logoutError) {
+      setError(logoutError instanceof Error ? logoutError.message : 'No se pudo cerrar la sesión.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[#FAF8F5] pt-16 px-4 py-12">
+      <section className="max-w-xl mx-auto bg-white border border-[#DDD9D0] p-8">
+        <p className="text-[#C9A96E] text-xs font-600 tracking-[0.3em] uppercase mb-2">Mi cuenta</p>
+        <h1 className="font-display text-3xl font-700 text-[#0D0D0D] mb-6">Sesión iniciada</h1>
+        {session ? (
+          <>
+            <p className="text-sm text-[#6B6860] mb-1">Correo electrónico</p>
+            <p className="text-[#0D0D0D] font-600 break-all">{session.email}</p>
+            <p className="text-sm text-[#6B6860] mt-4 mb-1">Tipo de cuenta</p>
+            <p className="text-[#0D0D0D] font-600">{session.role === 'admin' ? 'Administrador' : 'Cliente'}</p>
+          </>
+        ) : (
+          <p className="text-sm text-[#6B6860]">No hay una sesión activa. Inicia sesión para acceder a tu cuenta.</p>
+        )}
+
+        {error && <p role="alert" className="mt-5 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
+
+        <div className="mt-8 flex flex-col gap-3">
+          {session?.role === 'client' && (
+            <button onClick={() => setPage('avatar')} className="w-full bg-[#C9A96E] py-3 text-sm font-700 uppercase tracking-wide text-[#0D0D0D] hover:bg-[#b8955c]">
+              Ver o editar mi avatar
+            </button>
+          )}
+          {!session && (
+            <button onClick={() => setPage('login')} className="w-full bg-[#0D0D0D] py-3 text-sm font-700 uppercase tracking-wide text-white hover:bg-[#C9A96E] hover:text-[#0D0D0D]">
+              Iniciar sesión
+            </button>
+          )}
+          {session && (
+            <button onClick={() => void handleLogout()} disabled={loading} className="w-full border border-[#DDD9D0] py-3 text-sm font-600 uppercase tracking-wide text-[#6B6860] hover:border-[#0D0D0D] disabled:opacity-50">
+              {loading ? 'Cerrando sesión...' : 'Cerrar sesión'}
+            </button>
+          )}
+          <button onClick={() => setPage('home')} className="text-sm text-[#6B6860] hover:text-[#0D0D0D]">
+            Volver a la tienda
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 // ─── Register Page ────────────────────────────────────────────────────────────
 
-function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
+function RegisterPage({ setPage, returnPage, onAuthenticated }: { setPage: (p: Page) => void; returnPage: Page | null; onAuthenticated: () => void }) {
   const [step, setStep] = useState(1)
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '', role: 'client' as UserRole, adminCode: '' })
+  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '', confirm: '', role: 'client' as UserRole, adminCode: '' })
   const [measurements, setMeasurements] = useState<UserMeasurements>(DEFAULT_MEASUREMENTS)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -1004,9 +1103,9 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
 
   async function submitAccount() {
     const email = form.email.trim().toLowerCase()
-    const fullName = form.name.trim()
-    const [firstName, ...rest] = fullName.split(/\s+/)
-    const lastName = rest.join(' ')
+    const firstName = form.firstName.trim()
+    const lastName = form.lastName.trim()
+    const fullName = `${firstName} ${lastName}`
 
     setLoading(true)
 
@@ -1037,6 +1136,9 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
         return
       }
 
+      storeSessionInfo({ email, role: form.role })
+      onAuthenticated()
+      setPage(form.role === 'admin' ? 'admin' : returnPage ?? 'home')
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ email, role: form.role }))
       if (form.role !== 'admin') {
         localStorage.setItem('velour-temp-measurements', JSON.stringify(measurements))
@@ -1072,7 +1174,8 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
   function handleStep1(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (form.name.trim().length < 2) return setError('Ingresa tu nombre completo.')
+    if (form.firstName.trim().length < 2) return setError('Ingresa tu nombre.')
+    if (form.lastName.trim().length < 2) return setError('Ingresa tu apellido.')
     if (!isValidEmail(form.email.trim())) return setError('Ingresa un correo electrónico válido.')
     if (form.role === 'admin' && form.adminCode !== ADMIN_INVITATION_CODE) return setError('El código de invitación de administrador no es válido.')
     if (formRef.current) {
@@ -1151,10 +1254,17 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
 
           {step === 1 ? (
             <form ref={formRef} onSubmit={handleStep1} className="space-y-4" noValidate>
-              <div>
-                <label htmlFor="reg-name" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Nombre completo</label>
-                <input id="reg-name" type="text" value={form.name} onChange={e => update('name', e.target.value)} placeholder="Ana García" required autoComplete="name"
-                  className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="reg-first-name" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Nombre</label>
+                  <input id="reg-first-name" type="text" value={form.firstName} onChange={e => update('firstName', e.target.value)} placeholder="Ana" required autoComplete="given-name"
+                    className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
+                </div>
+                <div>
+                  <label htmlFor="reg-last-name" className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Apellido</label>
+                  <input id="reg-last-name" type="text" value={form.lastName} onChange={e => update('lastName', e.target.value)} placeholder="García" required autoComplete="family-name"
+                    className="w-full px-4 py-3 border border-[#DDD9D0] text-sm focus:border-[#C9A96E] focus:outline-none bg-white transition-colors" />
+                </div>
               </div>
               <div>
                 <p className="block text-xs font-600 tracking-wide uppercase text-[#6B6860] mb-1.5">Tipo de cuenta</p>
@@ -1234,6 +1344,8 @@ function RegisterPage({ setPage }: { setPage: (p: Page) => void }) {
 function AvatarPage({ setPage }: { setPage: (p: Page) => void }) {
   const [step, setStep] = useState<'form' | 'generating' | 'done'>('form')
   const [gender, setGender] = useState<'F' | 'M'>('F')
+  const [loadingMeasurements, setLoadingMeasurements] = useState(true)
+  const [error, setError] = useState('')
   const [measurements, setMeasurements] = useState<UserMeasurements>({
     gender: 'F', height: '', weight: '', chest: '', waist: '', hips: '', shoulder: '', inseam: ''
   })
@@ -1245,8 +1357,68 @@ function AvatarPage({ setPage }: { setPage: (p: Page) => void }) {
     setMeasurements(m => ({ ...m, [k]: v }))
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    let active = true
+
+    async function loadSavedMeasurements() {
+      try {
+        const { data: { user }, error: userError } = await supabase.auth.getUser()
+        if (userError) throw userError
+        if (!user) return
+
+        const saved = user.user_metadata?.medidas
+        if (!saved || typeof saved !== 'object') return
+        const values = saved as Record<string, unknown>
+        const savedMeasurements: UserMeasurements = {
+          gender: user.user_metadata?.genero === 'M' || values.gender === 'M' ? 'M' : 'F',
+          height: String(values.height ?? ''),
+          weight: String(values.weight ?? ''),
+          chest: String(values.chest ?? ''),
+          waist: String(values.waist ?? ''),
+          hips: String(values.hips ?? ''),
+          shoulder: String(values.shoulder ?? ''),
+          inseam: String(values.inseam ?? ''),
+        }
+
+        if (!validateMeasurements(savedMeasurements) && active) {
+          setGender(savedMeasurements.gender)
+          setMeasurements(savedMeasurements)
+          setStep('done')
+        }
+      } catch (loadError) {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'No se pudieron cargar tus medidas guardadas.')
+      } finally {
+        if (active) setLoadingMeasurements(false)
+      }
+    }
+
+    void loadSavedMeasurements()
+    return () => { active = false }
+  }, [])
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setError('')
+    const invalidMeasurement = validateMeasurements({ ...measurements, gender })
+    if (invalidMeasurement) {
+      setError('Revisa las medidas: deben estar dentro de un rango válido y en las unidades indicadas.')
+      return
+    }
+
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError) throw userError
+      if (!user) throw new Error('Inicia sesión para guardar tus medidas en tu cuenta.')
+
+      const { error: saveError } = await supabase.auth.updateUser({
+        data: { genero: gender, medidas: { ...measurements, gender } },
+      })
+      if (saveError) throw saveError
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'No se pudieron guardar tus medidas.')
+      return
+    }
+
     setStep('generating')
   }
 
@@ -1288,11 +1460,15 @@ function AvatarPage({ setPage }: { setPage: (p: Page) => void }) {
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-12">
         <div className="mb-10">
           <p className="text-[#C9A96E] text-xs font-600 tracking-[0.3em] uppercase mb-2">Tecnología VELOUR</p>
-          <h1 className="font-display text-4xl sm:text-5xl font-700 text-[#0D0D0D] mb-3">Crear mi Avatar</h1>
-          <p className="text-[#6B6860] text-base max-w-lg">Ingresa tus medidas biométricas para generar tu avatar personalizado. Así podrás probarte ropa virtualmente antes de comprar.</p>
+          <h1 className="font-display text-4xl sm:text-5xl font-700 text-[#0D0D0D] mb-3">Mi Avatar</h1>
+          <p className="text-[#6B6860] text-base max-w-lg">Consulta tu avatar y tus medidas guardadas. Puedes editarlas cuando quieras para actualizar tu perfil.</p>
         </div>
 
-        {step === 'form' && (
+        {error && <p role="alert" className="mb-6 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
+
+        {loadingMeasurements ? (
+          <p role="status" className="py-16 text-center text-sm text-[#6B6860]">Cargando tus medidas guardadas...</p>
+        ) : step === 'form' && (
           <div className="grid lg:grid-cols-2 gap-12">
             {/* Form */}
             <div>
@@ -1960,9 +2136,12 @@ type CheckoutStep = 'shipping' | 'payment' | 'confirm'
 function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSuccess: () => void; setPage: (page: Page) => void }) {
   const [step, setStep] = useState<CheckoutStep>('shipping')
   const [processing, setProcessing] = useState(false)
+  const [paymentError, setPaymentError] = useState('')
   const [payMethod, setPayMethod] = useState<'card' | 'transfer' | 'yape'>('card')
   const [shipping, setShipping] = useState({ name: '', lastname: '', email: '', phone: '', address: '', city: '', dept: '', zip: '' })
   const [card, setCard] = useState({ number: '', name: '', expiry: '', cvv: '' })
+  const [orderNum] = useState(() => `VL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`)
+  const [returnCode] = useState(() => `DEV-${crypto.randomUUID().slice(0, 8).toUpperCase()}`)
   const pageRef = useGsapEntrance([])
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -1985,14 +2164,70 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
 
   const spinnerRef = useRef<SVGSVGElement>(null)
 
+  async function completePurchase() {
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError) throw userError
+      if (!user) throw new Error('Inicia sesión antes de realizar la compra para guardar tu pedido.')
+
+      const { error } = await supabase.rpc('crear_pedido_con_detalles', {
+        p_numero_orden: orderNum,
+        p_codigo_devolucion: returnCode,
+        p_monto_total: Math.round(total * PRICE_STORAGE_SCALE),
+        p_direccion_envio: [
+          shipping.address.trim(),
+          shipping.dept.trim(),
+          shipping.city.trim(),
+          shipping.zip.trim(),
+        ].filter(Boolean).join(', '),
+        p_productos: cart.map(item => ({
+          producto_id: String(item.id),
+          nombre_producto: item.name,
+          talla: item.size,
+          cantidad: item.qty,
+          precio_unitario: Math.round(item.price * PRICE_STORAGE_SCALE),
+        })),
+      })
+      if (error) throw error
+      animateStep('confirm')
+    } catch (error) {
+      console.error('Error registrando la compra:', error)
+      const errorInfo = error && typeof error === 'object'
+        ? error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown }
+        : null
+      const message = typeof error === 'string'
+        ? error
+        : typeof errorInfo?.message === 'string'
+          ? errorInfo.message
+          : error instanceof Error
+            ? error.message
+            : 'Supabase devolvió un error sin descripción.'
+      const code = typeof errorInfo?.code === 'string' ? errorInfo.code : ''
+      const details = typeof errorInfo?.details === 'string' ? errorInfo.details : ''
+      const hint = typeof errorInfo?.hint === 'string' ? errorInfo.hint : ''
+      const description = [message, details, hint].filter(Boolean).join(' ')
+
+      setPaymentError(
+        code === 'PGRST202' || description.includes('crear_pedido_con_detalles')
+          ? `${description} Ejecuta en Supabase el SQL actualizado que crea la función crear_pedido_con_detalles y vuelve a intentar.`
+          : description.toLowerCase().includes('stock')
+            ? 'No hay suficiente stock para uno o más productos. Actualiza el carrito e inténtalo de nuevo.'
+          : description,
+      )
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   function handlePayment(e: React.FormEvent) {
     e.preventDefault()
+    setPaymentError('')
     setProcessing(true)
     const tick = () => {
       if (spinnerRef.current) {
         gsap.fromTo(spinnerRef.current, { rotation: 0, transformOrigin: '50% 50%' }, {
           rotation: 360, duration: 1, repeat: 2, ease: 'linear',
-          onComplete: () => { setProcessing(false); animateStep('confirm') }
+          onComplete: () => { void completePurchase() }
         })
       } else {
         setTimeout(tick, 50)
@@ -2000,8 +2235,6 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
     }
     setTimeout(tick, 30)
   }
-
-  const orderNum = `VL-${Math.floor(100000 + Math.random() * 900000)}`
 
   function formatCard(v: string) {
     return v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
@@ -2242,6 +2475,17 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
                     </div>
                   )}
 
+                  {paymentError && (
+                    <div role="alert" className="border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                      <p>No se pudo completar la compra: {paymentError}</p>
+                      {paymentError.includes('Inicia sesión') && (
+                        <button type="button" onClick={() => setPage('login')} className="mt-2 font-700 underline">
+                          Iniciar sesión para guardar mi pedido
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {/* Security badges */}
                   <div className="flex items-center gap-3 py-3 border-t border-[#DDD9D0]">
                     <svg width="16" height="20" viewBox="0 0 16 20" fill="none" aria-hidden="true"><path d="M8 0L0 3v7c0 5.25 3.5 10.15 8 11.5C12.5 20.15 16 15.25 16 10V3L8 0z" fill="#C9A96E" opacity="0.8"/></svg>
@@ -2307,14 +2551,14 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
         )}
 
         {step === 'confirm' && (
-          <ConfirmStep orderNum={orderNum} total={total} cart={cart} onSuccess={onSuccess} />
+          <ConfirmStep orderNum={orderNum} returnCode={returnCode} total={total} cart={cart} onSuccess={onSuccess} />
         )}
       </div>
     </div>
   )
 }
 
-function ConfirmStep({ orderNum, total, cart, onSuccess }: { orderNum: string; total: number; cart: CartItem[]; onSuccess: () => void }) {
+function ConfirmStep({ orderNum, returnCode, total, cart, onSuccess }: { orderNum: string; returnCode: string; total: number; cart: CartItem[]; onSuccess: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const checkRef = useRef<SVGCircleElement>(null)
 
@@ -2345,7 +2589,11 @@ function ConfirmStep({ orderNum, total, cart, onSuccess }: { orderNum: string; t
       <p className="text-[#C9A96E] text-xs font-600 tracking-[0.3em] uppercase mb-3">Pago aprobado</p>
       <h2 className="font-display text-4xl font-700 text-[#0D0D0D] mb-3">¡Gracias por tu compra!</h2>
       <p className="text-[#6B6860] text-sm mb-2">Tu pedido ha sido confirmado y está siendo preparado.</p>
-      <p className="text-sm text-[#0D0D0D] font-600 mb-8">Número de orden: <span className="text-[#C9A96E]">{orderNum}</span></p>
+      <div className="mb-8 space-y-2 text-sm font-600 text-[#0D0D0D]">
+        <p>Número de orden: <span className="text-[#C9A96E]">{orderNum}</span></p>
+        <p>Código de devolución: <span className="text-[#C9A96E]">{returnCode}</span></p>
+        <p className="text-xs font-normal text-[#6B6860]">Guarda este código para identificar tu compra si solicitas una devolución o cambio.</p>
+      </div>
 
       <div className="bg-white border border-[#DDD9D0] p-5 text-left mb-8">
         <h3 className="font-600 text-sm text-[#0D0D0D] mb-4">Resumen del pedido</h3>
@@ -2390,7 +2638,7 @@ function ConfirmStep({ orderNum, total, cart, onSuccess }: { orderNum: string; t
 
 type AdminTab = 'dashboard' | 'orders' | 'products' | 'clients' | 'returns'
 
-function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page) => void; onProductsChanged: () => Promise<void> }) {
+function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: (p: Page) => void; onProductsChanged: () => Promise<void>; session: SessionInfo | null }) {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard')
 
   // States for DB data
@@ -2403,7 +2651,9 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
   const [dbError, setDbError] = useState('')
   const [productEditorOpen, setProductEditorOpen] = useState(false)
   const [editingProduct, setEditingProduct] = useState<any | null>(null)
-  const [productForm, setProductForm] = useState({ name: '', price: '', categoryId: '', tag: '', imageUrl: '' })
+  const [selectedClient, setSelectedClient] = useState<any | null>(null)
+  const [copiedClientEmail, setCopiedClientEmail] = useState(false)
+  const [productForm, setProductForm] = useState({ name: '', price: '', stock: '0', categoryId: '', tag: '', imageUrl: '' })
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
 
   async function loadData() {
@@ -2411,10 +2661,10 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     setDbError('')
     try {
       const [ordersResult, productsResult, categoriesResult, clientsResult, returnsResult] = await Promise.all([
-        supabase.from('pedidos').select('id, monto_total, estado, creado_el, perfiles(nombre, apellido)').order('creado_el', { ascending: false }),
+        supabase.from('pedidos').select('id, numero_orden, monto_total, estado, creado_el, perfiles(nombre, apellido), pedido_productos(id, codigo_producto, producto_id, nombre_producto, talla, estado)').order('creado_el', { ascending: false }),
         fetchProductsFromSupabase(),
         supabase.from('categorias').select('id, nombre').order('nombre'),
-        supabase.from('perfiles').select('id, nombre, apellido, correo, creado_el, pedidos(monto_total)'),
+        supabase.from('perfiles').select('id, nombre, apellido, correo, creado_el, pedidos(id, numero_orden, codigo_devolucion, monto_total, estado, creado_el, pedido_productos(id, codigo_producto, nombre_producto, talla, estado))'),
         supabase.from('devoluciones').select('id, codigo_devolucion, pedido_id, motivo, estado, creado_el, perfiles(nombre, apellido), variantes_producto(productos(nombre))').order('creado_el', { ascending: false }),
       ])
 
@@ -2440,16 +2690,22 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     setProductForm(product ? {
       name: product.nombre,
       price: String(Number(product.precio_base) / PRICE_STORAGE_SCALE),
+      stock: String(product.stock ?? 0),
       categoryId: product.categorias?.id ?? '',
       tag: product.etiqueta ?? '',
       imageUrl: product.imagen_url ?? '',
-    } : { name: '', price: '', categoryId: '', tag: '', imageUrl: '' })
+    } : { name: '', price: '', stock: '0', categoryId: '', tag: '', imageUrl: '' })
     setProductEditorOpen(true)
   }
 
   async function saveProduct(event: React.FormEvent) {
     event.preventDefault()
     setDbError('')
+    const stock = Number(productForm.stock)
+    if (!Number.isInteger(stock) || stock < 0) {
+      setDbError('El stock debe ser un número entero igual o mayor que cero.')
+      return
+    }
     if (productImageFile && !['image/jpeg', 'image/png', 'image/webp'].includes(productImageFile.type)) {
       setDbError('La imagen debe ser JPG, PNG o WebP.')
       return
@@ -2461,6 +2717,7 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     const payload: Record<string, string | number> = {
       nombre: productForm.name.trim(),
       precio_base: Number(productForm.price) * PRICE_STORAGE_SCALE,
+      stock,
       etiqueta: productForm.tag.trim(),
     }
     if (!editingProduct) {
@@ -2493,26 +2750,56 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '')
-      const { data: category, error } = await supabase
+      const { data: existingCategory, error: lookupError } = await supabase
         .from('categorias')
-        .insert({
-          nombre: categoryName,
-          slug: categorySlug,
-          tipo_ranura: CATEGORY_SLOT_TYPES[categoryName],
-        })
         .select('id')
-        .single()
-      if (error || !category) {
+        .eq('slug', categorySlug)
+        .maybeSingle()
+      if (lookupError) {
         if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
-        setDbError(`No se pudo crear la categoría: ${error?.message ?? 'Respuesta vacía de Supabase.'}`)
+        setDbError(`No se pudo buscar la categoría: ${lookupError.message}`)
         return
       }
-      categoryId = String(category.id)
+
+      if (existingCategory) {
+        categoryId = String(existingCategory.id)
+      } else {
+        const { data: category, error: insertError } = await supabase
+          .from('categorias')
+          .insert({
+            nombre: categoryName,
+            slug: categorySlug,
+            tipo_ranura: CATEGORY_SLOT_TYPES[categoryName],
+          })
+          .select('id')
+          .single()
+
+        if (insertError?.code === '23505') {
+          const { data: duplicateCategory, error: duplicateLookupError } = await supabase
+            .from('categorias')
+            .select('id')
+            .eq('slug', categorySlug)
+            .maybeSingle()
+          if (!duplicateLookupError && duplicateCategory) {
+            categoryId = String(duplicateCategory.id)
+          } else {
+            if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+            setDbError(`La categoría ya existe, pero no se pudo recuperar: ${duplicateLookupError?.message ?? insertError.message}`)
+            return
+          }
+        } else if (insertError || !category) {
+          if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+          setDbError(`No se pudo crear la categoría: ${insertError?.message ?? 'Respuesta vacía de Supabase.'}`)
+          return
+        } else {
+          categoryId = String(category.id)
+        }
+      }
     }
     if (categoryId) payload.categoria_id = categoryId
 
     let result = editingProduct
-      ? await supabase.from('productos').update(payload).eq('id', editingProduct.id)
+      ? await supabase.from('productos').update(payload).eq('id', editingProduct.id).select('id').maybeSingle()
       : await supabase.from('productos').insert(payload)
 
     let imageWasSkipped = false
@@ -2528,7 +2815,7 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
       }
       delete payload.imagen_url
       result = editingProduct
-        ? await supabase.from('productos').update(payload).eq('id', editingProduct.id)
+        ? await supabase.from('productos').update(payload).eq('id', editingProduct.id).select('id').maybeSingle()
         : await supabase.from('productos').insert(payload)
       imageWasSkipped = !result.error
     }
@@ -2536,6 +2823,10 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     if (result.error) {
       if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
       setDbError(`No se pudo guardar el producto: ${result.error.message}`)
+      return
+    }
+    if (editingProduct && !result.data) {
+      setDbError('Supabase no actualizó el producto. Verifica que tu cuenta tenga rol admin y que el producto siga registrado; no se guardaron los cambios.')
       return
     }
 
@@ -2556,19 +2847,44 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     await onProductsChanged()
   }
 
-  async function updateOrderStatus(orderId: string, status: string) {
-    const { error } = await supabase.from('pedidos').update({ estado: status }).eq('id', orderId)
+  async function updateOrderItemStatus(itemId: string, status: string) {
+    const { error } = await supabase.rpc('actualizar_estado_articulo', {
+      p_articulo_id: itemId,
+      p_estado: status,
+    })
     if (error) {
-      setDbError(`No se pudo actualizar el pedido: ${error.message}`)
+      setDbError(`No se pudo actualizar el estado del producto: ${error.message}`)
       return
     }
     await loadData()
   }
 
+  async function updateReturnStatus(returnId: string, status: 'aprobado' | 'rechazado') {
+    setDbError('')
+    const { error } = await supabase.rpc('gestionar_devolucion', {
+      p_devolucion_id: returnId,
+      p_estado: status,
+    })
+    if (error) {
+      setDbError(`No se pudo actualizar la devolución: ${error.message}`)
+      return
+    }
+    await Promise.all([loadData(), onProductsChanged()])
+  }
+
   function exportOrders() {
     const rows = [
-      ['Pedido', 'Fecha', 'Cliente', 'Total', 'Estado'],
-      ...orderRows.map(row => [row.order, row.date, row.customer, row.total, row.status]),
+      ['Pedido', 'Código del artículo', 'Producto', 'Talla', 'Fecha', 'Cliente', 'Total', 'Estado del artículo'],
+      ...orderProductRows.map(row => [
+        row.order,
+        row.item?.codigo_producto ?? '',
+        row.item?.nombre_producto ?? '',
+        row.item?.talla ?? '',
+        row.date,
+        row.customer,
+        row.total,
+        row.item?.estado ?? '',
+      ]),
     ]
     const csv = rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\n')
     const link = document.createElement('a')
@@ -2578,8 +2894,14 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     URL.revokeObjectURL(link.href)
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      setDbError(`No se pudo cerrar la sesión: ${error.message}`)
+      return
+    }
     localStorage.removeItem(SESSION_STORAGE_KEY)
+    window.dispatchEvent(new Event('velour-session-change'))
     setPage('login')
   }
 
@@ -2598,20 +2920,26 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     { label: 'Devoluciones', value: dbReturns.length.toString(), delta: 'N/A', tone: 'rose' },
   ]
 
-  const orderRows = dbOrders.map(order => ({
-    id: order.id,
-    order: order.id.substring(0, 8),
-    customer: order.perfiles ? `${order.perfiles.nombre || ''} ${order.perfiles.apellido || ''}`.trim() : 'Desconocido',
-    date: new Date(order.creado_el).toLocaleDateString('es-PE'),
-    total: formatPrice(Number(order.monto_total) / PRICE_STORAGE_SCALE),
-    status: order.estado ? order.estado.charAt(0).toUpperCase() + order.estado.slice(1) : 'Desconocido'
-  }))
+  const orderProductRows = dbOrders.flatMap(order => {
+    const items = order.pedido_productos ?? []
+    const orderInfo = {
+      order: order.numero_orden || order.id.substring(0, 8),
+      customer: order.perfiles ? `${order.perfiles.nombre || ''} ${order.perfiles.apellido || ''}`.trim() : 'Desconocido',
+      date: new Date(order.creado_el).toLocaleDateString('es-PE'),
+      total: formatPrice(Number(order.monto_total) / PRICE_STORAGE_SCALE),
+    }
+    return items.length
+      ? items.map((item: any) => ({ ...orderInfo, item }))
+      : [{ ...orderInfo, item: null }]
+  })
 
   const productRows = dbProducts.map(prod => ({
     id: prod.id,
+    code: String(prod.id),
     product: prod.nombre,
     category: prod.categorias ? prod.categorias.nombre : 'Sin categoría',
     price: formatPrice(Number(prod.precio_base) / PRICE_STORAGE_SCALE),
+    stock: Number(prod.stock ?? 0),
     tag: prod.etiqueta || 'Base',
     actions: 'Ver'
   }))
@@ -2620,6 +2948,7 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     const ordersCount = client.pedidos ? client.pedidos.length : 0;
     const totalSpent = client.pedidos ? client.pedidos.reduce((sum: number, p: any) => sum + Number(p.monto_total) / PRICE_STORAGE_SCALE, 0) : 0;
     return {
+      id: client.id,
       client: `${client.nombre || ''} ${client.apellido || ''}`.trim() || 'Desconocido',
       email: client.correo,
       orders: ordersCount,
@@ -2629,55 +2958,18 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     }
   })
 
-  const fallbackReturnRows: ReturnRow[] = [
-    {
-      code: 'DEV-2041',
-      order: '#1042',
-      client: 'Laura Silva',
-      email: 'laura.silva@email.com',
-      phone: '+51 999 456 789',
-      address: 'Av. Arequipa 120, Lima',
-      product: 'Chaqueta Oversized',
-      reason: 'Talla incorrecta',
-      date: '13 Ago 2026',
-      status: 'En revisión',
-      action: 'Aprobar',
-      details: 'El cliente solicitó cambio por talla más pequeña; la prenda llegó sin etiquetas y con la caja cerrada.',
-      productImage: 'https://images.unsplash.com/photo-1555529771-835f59fc5efe?w=800&h=1000&fit=crop&auto=format',
-    },
-    {
-      code: 'DEV-2042',
-      order: '#1036',
-      client: 'Julián Gómez',
-      email: 'julian.gomez@email.com',
-      phone: '+51 987 222 441',
-      address: 'Av. Ejército 230, Arequipa',
-      product: 'Pantalón Wide Leg',
-      reason: 'Defecto de material',
-      date: '12 Ago 2026',
-      status: 'Aprobado',
-      action: 'Rechazar',
-      details: 'Se reportó que la tela presenta rotura en la costura lateral. Se adjuntó evidencia fotográfica del defecto.',
-      productImage: 'https://images.unsplash.com/photo-1540221652346-e5dd6b50f3e7?w=800&h=1000&fit=crop&auto=format',
-    },
-    {
-      code: 'DEV-2043',
-      order: '#1028',
-      client: 'Camila Torres',
-      email: 'camila.torres@email.com',
-      phone: '+51 989 760 991',
-      address: 'Jr. El Sol 350, Cusco',
-      product: 'Vestido Fluido',
-      reason: 'Cambio de opinión',
-      date: '11 Ago 2026',
-      status: 'Pendiente',
-      action: 'Aprobar',
-      details: 'La clienta desea devolver el producto por cambio de preferencia; adjuntó imágenes del vestido en perfecto estado.',
-      productImage: 'https://images.unsplash.com/photo-1549570652-97324981a6fd?w=800&h=1000&fit=crop&auto=format',
-    },
-  ]
+  async function copyClientEmail(email: string) {
+    try {
+      await navigator.clipboard.writeText(email)
+      setCopiedClientEmail(true)
+      window.setTimeout(() => setCopiedClientEmail(false), 2000)
+    } catch (error) {
+      setDbError(`No se pudo copiar el correo: ${error instanceof Error ? error.message : 'el navegador no permitió acceder al portapapeles.'}`)
+    }
+  }
 
-  const returnRows: ReturnRow[] = dbReturns.length > 0 ? dbReturns.map(ret => ({
+  const returnRows: ReturnRow[] = dbReturns.map(ret => ({
+    id: ret.id,
     code: ret.codigo_devolucion,
     order: ret.pedido_id ? ret.pedido_id.substring(0, 8) : '',
     client: ret.perfiles ? `${ret.perfiles.nombre || ''} ${ret.perfiles.apellido || ''}`.trim() : 'Desconocido',
@@ -2685,13 +2977,13 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
     reason: ret.motivo,
     date: new Date(ret.creado_el).toLocaleDateString('es-PE'),
     status: ret.estado ? ret.estado.charAt(0).toUpperCase() + ret.estado.slice(1) : 'Desconocido',
-    action: 'Ver',
+    action: ret.estado === 'pendiente' || ret.estado === 'en revisión' ? 'Resolver' : 'Resuelta',
     email: '',
     phone: '',
     address: '',
     details: '',
     productImage: '',
-  })) : fallbackReturnRows
+  }))
 
   const [selectedReturnCode, setSelectedReturnCode] = useState(returnRows[0]?.code ?? '')
   const selectedReturn = returnRows.find(row => row.code === selectedReturnCode) ?? returnRows[0] ?? {
@@ -2822,14 +3114,49 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
           <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
             <tr>
               <th className="px-4 py-3 font-600">Orden</th>
+              <th className="px-4 py-3 font-600">Código del artículo</th>
+              <th className="px-4 py-3 font-600">Producto</th>
               <th className="px-4 py-3 font-600">Cliente</th>
               <th className="px-4 py-3 font-600">Fecha</th>
               <th className="px-4 py-3 font-600">Total</th>
-              <th className="px-4 py-3 font-600">Estado</th>
+              <th className="px-4 py-3 font-600">Estado del artículo</th>
               <th className="px-4 py-3 font-600">Actualizar estado</th>
             </tr>
           </thead>
           <tbody>
+            {orderProductRows.map((row, index) => {
+              const item = row.item
+              const itemStatus = item?.estado ?? ''
+              const displayStatus = itemStatus ? itemStatus.charAt(0).toUpperCase() + itemStatus.slice(1) : 'Sin artículos'
+              return (
+                <tr key={item?.id ?? `${row.order}-${index}`} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
+                  <td className="px-4 py-3 font-600">{row.order}</td>
+                  <td className="px-4 py-3">
+                    {item ? <span className="font-mono text-xs">{item.codigo_producto}</span> : <span className="text-[#6B6860]">—</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item ? <>{item.nombre_producto}<span className="block text-xs text-[#6B6860]">Talla {item.talla}</span></> : <span className="text-[#6B6860]">Pedido antiguo sin detalle de artículos</span>}
+                  </td>
+                  <td className="px-4 py-3">{row.customer}</td>
+                  <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
+                  <td className="px-4 py-3 font-600">{row.total}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(displayStatus)}`}>{displayStatus}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <select
+                      aria-label={`Estado de ${item?.nombre_producto ?? `pedido ${row.order}`}${item ? `, código ${item.codigo_producto}` : ''}`}
+                      value={itemStatus}
+                      disabled={!item}
+                      onChange={event => item && void updateOrderItemStatus(item.id, event.target.value)}
+                      className="border border-[#DDD9D0] bg-white px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-[#F5F1ED]"
+                    >
+                      {item ? ['pendiente', 'en preparación', 'enviado', 'entregado', 'cancelado'].map(status => <option key={status} value={status}>{status}</option>) : <option value="">Sin artículos</option>}
+                    </select>
+                  </td>
+                </tr>
+              )
+            })}
             {orderRows.map((row, index) => (
               <tr key={`${row.order}-${index}`} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
                 <td className="px-4 py-3 font-600">{row.order}</td>
@@ -2867,8 +3194,10 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
           <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
             <tr>
               <th className="px-4 py-3 font-600">Producto</th>
+              <th className="px-4 py-3 font-600">Código</th>
               <th className="px-4 py-3 font-600">Categoría</th>
               <th className="px-4 py-3 font-600">Precio</th>
+              <th className="px-4 py-3 font-600">Stock</th>
               <th className="px-4 py-3 font-600">Etiqueta</th>
               <th className="px-4 py-3 font-600">Acciones</th>
             </tr>
@@ -2877,8 +3206,10 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
             {productRows.map(row => (
               <tr key={row.id} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
                 <td className="px-4 py-3 font-600">{row.product}</td>
+                <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
                 <td className="px-4 py-3">{row.category}</td>
                 <td className="px-4 py-3">{row.price}</td>
+                <td className="px-4 py-3">{row.stock}</td>
                 <td className="px-4 py-3"><span className="inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full bg-[#F2EFE9] text-[#0D0D0D]">{row.tag}</span></td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
@@ -2926,7 +3257,14 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
                 <td className="px-4 py-3">{row.orders}</td>
                 <td className="px-4 py-3">{row.total}</td>
                 <td className="px-4 py-3">{row.since}</td>
-                <td className="px-4 py-3"><button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">{row.actions}</button></td>
+                <td className="px-4 py-3">
+                  <button
+                    onClick={() => { setSelectedClient(dbClients.find(client => client.id === row.id) ?? null); setCopiedClientEmail(false) }}
+                    className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]"
+                  >
+                    {row.actions}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -2949,9 +3287,9 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
 
       <div className="grid gap-4 md:grid-cols-3">
         {[
-          { label: 'Total solicitudes', value: '128', detail: '+12% vs mes pasado' },
-          { label: 'Pendientes', value: '24', detail: 'Requieren revisión' },
-          { label: 'Aprobadas', value: '94', detail: 'Procesadas hoy' },
+            { label: 'Total solicitudes', value: dbReturns.length, detail: 'Registradas en el sistema' },
+            { label: 'Pendientes', value: dbReturns.filter(item => item.estado === 'pendiente' || item.estado === 'en revisión').length, detail: 'Requieren revisión' },
+            { label: 'Aprobadas', value: dbReturns.filter(item => item.estado === 'aprobado').length, detail: 'Stock repuesto al aprobar' },
         ].map(stat => (
           <div key={stat.label} className="bg-white border border-[#E6E1D8] p-5 shadow-sm">
             <p className="text-sm text-[#6B6860]">{stat.label}</p>
@@ -2990,13 +3328,19 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
                     <button onClick={() => setSelectedReturnCode(row.code)} className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E] text-left">
                       Ver detalles
                     </button>
-                    <button className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E] text-left">{row.action}</button>
+                    {row.id && (row.status === 'Pendiente' || row.status === 'En revisión') && (
+                      <>
+                        <button onClick={() => void updateReturnStatus(row.id!, 'aprobado')} className="text-xs font-600 text-emerald-700 hover:text-emerald-900 text-left">Aprobar y reponer stock</button>
+                        <button onClick={() => void updateReturnStatus(row.id!, 'rechazado')} className="text-xs font-600 text-red-700 hover:text-red-900 text-left">Rechazar</button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {returnRows.length === 0 && renderTableEmptyState(isLoading ? 'Cargando devoluciones…' : 'No hay devoluciones registradas')}
       </div>
 
       <div className="bg-[#FAF8F5] border border-[#E6E1D8] p-5 shadow-sm">
@@ -3065,7 +3409,7 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
   )
 
   return (
-    <div className="min-h-screen bg-[#FDFBF7] pt-16 flex font-sans selection:bg-[#C9A96E]/30 relative overflow-hidden">
+    <div className="min-h-screen bg-[#FDFBF7] flex font-sans selection:bg-[#C9A96E]/30 relative overflow-hidden">
       <div className="absolute top-0 left-1/4 w-[50vw] h-[50vw] bg-[#C9A96E]/10 rounded-full blur-3xl -translate-y-1/2 pointer-events-none"></div>
       
       <aside className="w-72 bg-[#080808] text-white flex-shrink-0 flex flex-col justify-between border-r border-[#1a1a1a] relative z-20">
@@ -3108,7 +3452,19 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
         </div>
       </aside>
 
-      <main className="flex-1 p-8 md:p-12 h-[calc(100vh-4rem)] overflow-y-auto relative z-10 scrollbar-hide">
+      <main className="flex-1 p-6 md:p-10 h-screen overflow-y-auto relative z-10 scrollbar-hide">
+        <header className="mb-8 flex flex-col gap-4 border border-[#E6E1D8] bg-white/80 px-6 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[10px] font-800 uppercase tracking-[0.25em] text-[#C9A96E]">Panel de administración</p>
+            <p className="mt-1 text-sm font-600 text-[#0D0D0D]">Bienvenido, {session?.email || 'Administrador'}</p>
+          </div>
+          <div className="text-left sm:text-right">
+            <p className="text-[10px] font-700 uppercase tracking-[0.2em] text-[#6B6860]">Fecha de hoy</p>
+            <p className="mt-1 text-sm font-600 capitalize text-[#0D0D0D]">
+              {new Intl.DateTimeFormat('es-PE', { dateStyle: 'full' }).format(new Date())}
+            </p>
+          </div>
+        </header>
         {dbError && <div role="alert" className="mb-6 border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{dbError}</div>}
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'orders' && renderOrders()}
@@ -3116,6 +3472,117 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
         {activeTab === 'clients' && renderClients()}
         {activeTab === 'returns' && renderReturns()}
       </main>
+
+      {selectedClient && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+          onMouseDown={event => { if (event.target === event.currentTarget) setSelectedClient(null) }}
+        >
+          <section
+            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto bg-white p-6 shadow-2xl sm:p-8"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="client-detail-title"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[#EEE8E1] pb-5">
+              <div>
+                <p className="text-xs font-700 uppercase tracking-[0.2em] text-[#C9A96E]">Ficha del cliente</p>
+                <h2 id="client-detail-title" className="mt-2 font-display text-2xl font-700 text-[#0D0D0D]">
+                  {[selectedClient.nombre, selectedClient.apellido].filter(Boolean).join(' ') || 'Cliente'}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setSelectedClient(null)} aria-label="Cerrar detalle" className="px-2 text-2xl text-[#6B6860] hover:text-[#0D0D0D]">
+                ×
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div className="border border-[#EEE8E1] bg-[#FAF8F5] p-4">
+                <p className="text-[10px] font-700 uppercase tracking-[0.15em] text-[#6B6860]">Correo electrónico</p>
+                <p className="mt-2 break-all text-sm font-600 text-[#0D0D0D]">{selectedClient.correo || 'No registrado'}</p>
+                {selectedClient.correo && (
+                  <button
+                    type="button"
+                    onClick={() => void copyClientEmail(selectedClient.correo)}
+                    className="mt-3 text-xs font-700 text-[#8A6B36] hover:underline"
+                  >
+                    {copiedClientEmail ? 'Correo copiado' : 'Copiar correo'}
+                  </button>
+                )}
+              </div>
+              <div className="border border-[#EEE8E1] bg-[#FAF8F5] p-4">
+                <p className="text-[10px] font-700 uppercase tracking-[0.15em] text-[#6B6860]">Miembro desde</p>
+                <p className="mt-2 text-sm font-600 text-[#0D0D0D]">
+                  {selectedClient.creado_el ? new Date(selectedClient.creado_el).toLocaleDateString('es-PE') : 'Sin fecha'}
+                </p>
+              </div>
+              <div className="border border-[#EEE8E1] p-4">
+                <p className="text-[10px] font-700 uppercase tracking-[0.15em] text-[#6B6860]">Pedidos realizados</p>
+                <p className="mt-2 font-display text-2xl font-700 text-[#0D0D0D]">{selectedClient.pedidos?.length ?? 0}</p>
+              </div>
+              <div className="border border-[#EEE8E1] p-4">
+                <p className="text-[10px] font-700 uppercase tracking-[0.15em] text-[#6B6860]">Total gastado</p>
+                <p className="mt-2 font-display text-2xl font-700 text-[#0D0D0D]">
+                  {formatPrice((selectedClient.pedidos ?? []).reduce((sum: number, order: any) => sum + Number(order.monto_total) / PRICE_STORAGE_SCALE, 0))}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8">
+              <h3 className="font-display text-xl font-700 text-[#0D0D0D]">Historial de pedidos</h3>
+              {selectedClient.pedidos?.length ? (
+                <div className="mt-4 space-y-4">
+                  {[...selectedClient.pedidos]
+                    .sort((a: any, b: any) => new Date(b.creado_el).getTime() - new Date(a.creado_el).getTime())
+                    .map((order: any) => (
+                      <article key={order.id} className="border border-[#E6E1D8] p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-700 text-[#0D0D0D]">Orden {order.numero_orden || order.id?.slice(0, 8) || '—'}</p>
+                            <p className="mt-1 text-xs text-[#6B6860]">
+                              {order.creado_el ? new Date(order.creado_el).toLocaleDateString('es-PE') : 'Fecha no disponible'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-700 text-[#0D0D0D]">{formatPrice(Number(order.monto_total) / PRICE_STORAGE_SCALE)}</p>
+                            <p className="mt-1 text-xs capitalize text-[#6B6860]">Estado: {order.estado || 'No disponible'}</p>
+                          </div>
+                        </div>
+                        <p className="mt-3 text-xs text-[#6B6860]">
+                          Código de devolución: <span className="font-mono font-700 text-[#0D0D0D]">{order.codigo_devolucion || 'No registrado'}</span>
+                        </p>
+                        {order.pedido_productos?.length ? (
+                          <ul className="mt-3 divide-y divide-[#EEE8E1] border-t border-[#EEE8E1]">
+                            {order.pedido_productos.map((item: any) => (
+                              <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                                <span className="text-[#0D0D0D]">
+                                  {item.nombre_producto} · Talla {item.talla}
+                                  <span className="ml-2 font-mono text-[#6B6860]">{item.codigo_producto}</span>
+                                </span>
+                                <span className="capitalize text-[#6B6860]">{item.estado}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="mt-3 text-xs text-[#6B6860]">Este pedido no tiene detalle de artículos registrado.</p>
+                        )}
+                      </article>
+                    ))}
+                </div>
+              ) : (
+                <p className="mt-3 border border-dashed border-[#DDD9D0] p-5 text-sm text-[#6B6860]">Este cliente todavía no tiene pedidos.</p>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button type="button" onClick={() => setSelectedClient(null)} className="border border-[#DDD9D0] px-5 py-2 text-xs font-700 uppercase tracking-wide text-[#0D0D0D] hover:border-[#0D0D0D]">
+                Cerrar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {productEditorOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setProductEditorOpen(false) }}>
@@ -3131,8 +3598,11 @@ function AdminDashboardPage({ setPage, onProductsChanged }: { setPage: (p: Page)
               <label className="block text-xs font-600 uppercase text-[#6B6860]">Precio (S/)
                 <input required type="number" min="0" step="0.01" value={productForm.price} onChange={event => setProductForm(form => ({ ...form, price: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
               </label>
+              <label className="block text-xs font-600 uppercase text-[#6B6860]">Stock disponible
+                <input required type="number" min="0" step="1" value={productForm.stock} onChange={event => setProductForm(form => ({ ...form, stock: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
+              </label>
               <label className="block text-xs font-600 uppercase text-[#6B6860]">Categoría
-                <select required value={productForm.categoryId} onChange={event => setProductForm(form => ({ ...form, categoryId: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] bg-white px-3 py-2 text-sm normal-case">
+                <select required={!editingProduct} value={productForm.categoryId} onChange={event => setProductForm(form => ({ ...form, categoryId: event.target.value }))} className="mt-1 w-full border border-[#DDD9D0] bg-white px-3 py-2 text-sm normal-case">
                   <option value="">Seleccionar</option>
                   {dbCategories.map(category => <option key={category.id} value={category.id}>{category.nombre}</option>)}
                   {CATEGORIES.filter(category => category !== 'Todos' && !dbCategories.some(item => item.nombre.toLowerCase() === category.toLowerCase())).map(category => (
@@ -3243,8 +3713,53 @@ function ForgotPasswordPage({ setPage }: { setPage: (p: Page) => void }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>('home')
+  const [session, setSession] = useState<SessionInfo | null>(() => getSessionInfo())
+  const [pendingPage, setPendingPage] = useState<Page | null>(null)
   const [cart, setCart] = useState<CartItem[]>([])
   const [products, setProducts] = useState<Product[]>(PRODUCTS)
+
+  useEffect(() => {
+    function syncAuthSession(authSession: Session | null) {
+      if (!authSession) {
+        localStorage.removeItem(SESSION_STORAGE_KEY)
+        setSession(null)
+        return
+      }
+
+      const email = authSession.user.email ?? ''
+      const storedSession = getSessionInfo()
+      if (storedSession?.email.toLowerCase() === email.toLowerCase()) {
+        setSession(storedSession)
+      } else {
+        const nextSession: SessionInfo = { email, role: 'client' }
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(nextSession))
+        setSession(nextSession)
+      }
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      syncAuthSession(authSession)
+    })
+    const handleStoredSessionChange = () => setSession(getSessionInfo())
+    window.addEventListener('velour-session-change', handleStoredSessionChange)
+
+    return () => {
+      subscription.unsubscribe()
+      window.removeEventListener('velour-session-change', handleStoredSessionChange)
+    }
+  }, [])
+
+  const navigatePage = useCallback((nextPage: Page) => {
+    const protectedPage = nextPage === 'avatar' || nextPage === 'tryon' || nextPage === 'checkout'
+    if (protectedPage && !session && !getSessionInfo()) {
+      setPendingPage(nextPage)
+      setPage('login')
+      return
+    }
+    setPage(nextPage)
+  }, [session])
+
+  const clearPendingPage = useCallback(() => setPendingPage(null), [])
 
   const loadProducts = useCallback(async () => {
     const { data, error } = await fetchProductsFromSupabase()
@@ -3259,6 +3774,7 @@ export default function App() {
       name: product.nombre,
       category: product.categorias?.nombre ?? 'Sin categoría',
       price: Number(product.precio_base) / PRICE_STORAGE_SCALE,
+      stock: Number(product.stock ?? 0),
       img: product.imagen_url || PRODUCTS[index % PRODUCTS.length].img,
       tag: product.etiqueta || undefined,
     })))
@@ -3267,17 +3783,36 @@ export default function App() {
   useEffect(() => { void loadProducts() }, [loadProducts])
 
   const addToCart = useCallback((product: Product, size: string) => {
+    const quantityInCart = cart
+      .filter(item => item.id === product.id)
+      .reduce((total, item) => total + item.qty, 0)
+    if (quantityInCart >= (product.stock ?? 0)) return false
+
     setCart(c => {
       const existing = c.find(i => i.id === product.id && i.size === size)
+      const currentQuantity = c
+        .filter(item => item.id === product.id)
+        .reduce((total, item) => total + item.qty, 0)
+      if (currentQuantity >= (product.stock ?? 0)) return c
       if (existing) return c.map(i => i.id === product.id && i.size === size ? { ...i, qty: i.qty + 1 } : i)
       return [...c, { ...product, qty: 1, size }]
     })
-  }, [])
+    return true
+  }, [cart])
 
   const cartCount = cart.reduce((s, i) => s + i.qty, 0)
 
-  function handleCheckoutSuccess() {
+  async function handleCheckoutSuccess() {
     setCart([])
+    setPage('home')
+    await loadProducts()
+  }
+
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut()
+    if (error) throw error
+    localStorage.removeItem(SESSION_STORAGE_KEY)
+    setSession(null)
     setPage('home')
   }
 
@@ -3289,19 +3824,20 @@ export default function App() {
 
   return (
     <>
-      {!hideNav && <Navbar page={page} setPage={setPage} cartCount={cartCount} />}
+      {!hideNav && <Navbar page={page} setPage={navigatePage} cartCount={cartCount} session={session} />}
 
       <main>
-        {page === 'home' && <HomePage setPage={setPage} products={products} />}
-        {page === 'products' && <ProductsPage setPage={setPage} addToCart={addToCart} products={products} />}
-        {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={setPage} onCheckout={() => setPage('checkout')} />}
-        {page === 'login' && <LoginPage setPage={setPage} />}
-        {page === 'register' && <RegisterPage setPage={setPage} />}
+        {page === 'home' && <HomePage setPage={navigatePage} products={products} />}
+        {page === 'products' && <ProductsPage setPage={navigatePage} addToCart={addToCart} products={products} />}
+        {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={navigatePage} onCheckout={() => navigatePage('checkout')} />}
+        {page === 'login' && <LoginPage setPage={setPage} returnPage={pendingPage} onAuthenticated={clearPendingPage} />}
+        {page === 'register' && <RegisterPage setPage={setPage} returnPage={pendingPage} onAuthenticated={clearPendingPage} />}
+        {page === 'account' && <AccountPage session={session} setPage={navigatePage} onLogout={handleLogout} />}
         {page === 'forgot-password' && <ForgotPasswordPage setPage={setPage} />}
-        {page === 'avatar' && <AvatarPage setPage={setPage} />}
-        {page === 'tryon' && <TryOnPage setPage={setPage} />}
-        {page === 'checkout' && <CheckoutPage cart={cart} onSuccess={handleCheckoutSuccess} setPage={setPage} />}
-        {page === 'admin' && <AdminDashboardPage setPage={setPage} onProductsChanged={loadProducts} />}
+        {page === 'avatar' && <AvatarPage setPage={navigatePage} />}
+        {page === 'tryon' && <TryOnPage setPage={navigatePage} />}
+        {page === 'checkout' && <CheckoutPage cart={cart} onSuccess={handleCheckoutSuccess} setPage={navigatePage} />}
+        {page === 'admin' && <AdminDashboardPage setPage={navigatePage} onProductsChanged={loadProducts} session={session} />}
       </main>
 
       <WhatsAppFAB />
