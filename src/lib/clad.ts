@@ -12,7 +12,7 @@ interface AvatarResult {
 }
 
 async function invoke(body: Record<string, unknown>): Promise<AvatarResult> {
-  const { data, error } = await supabase.functions.invoke('clad-avatar', { body })
+  const { data, error } = await supabase.functions.invoke('clad-avatar', { body, signal: AbortSignal.timeout(60000) })
   if (error) {
     if ('context' in error && error.context instanceof Response) {
       const response = await error.context.json().catch(() => null)
@@ -34,6 +34,7 @@ export function useCladAvatar(body: BodyMeasurements | null) {
   const [avatar, setAvatar] = useState<AvatarResult>({ status: 'none' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [refresh, setRefresh] = useState(0)
   const generation = useRef(0)
 
@@ -48,7 +49,7 @@ export function useCladAvatar(body: BodyMeasurements | null) {
     const run = ++generation.current
     let timer: ReturnType<typeof setTimeout>
     const started = Date.now()
-    setAvatar({ status: 'none' }); setError(''); setBusy(false)
+    setAvatar({ status: 'none' }); setError(''); setBusy(false); setLoading(Boolean(userId))
     if (!userId) return
     async function load(action: 'get' | 'poll') {
       if (run !== generation.current) return
@@ -56,6 +57,7 @@ export function useCladAvatar(body: BodyMeasurements | null) {
         const result = await invoke({ action })
         if (run !== generation.current) return
         setAvatar(result)
+        setLoading(false)
         const pending = result.status === 'generating' || result.status === 'tuning'
         setBusy(pending)
         if (pending) {
@@ -68,7 +70,7 @@ export function useCladAvatar(body: BodyMeasurements | null) {
           timer = setTimeout(() => void load('get'), 50 * 60 * 1000)
         } else if (result.status === 'error') setError('La generación anterior no se completó. Puedes volver a intentarlo.')
       } catch (cause) {
-        if (run === generation.current) { setBusy(false); setError(cause instanceof Error ? cause.message : 'No se pudo cargar el avatar.') }
+        if (run === generation.current) { setLoading(false); setBusy(false); setError(cause instanceof Error ? cause.message : 'No se pudo cargar el avatar.') }
       }
     }
     void load('get')
@@ -96,6 +98,8 @@ export function useCladAvatar(body: BodyMeasurements | null) {
     ? assessAvatarAccuracy(body, avatar.measurements) : null
   return {
     accuracy,
+    savedBody: avatar.status === 'ready' ? avatar.body_input ?? null : null,
+    loading,
     modelUrl: avatar.status === 'ready' && sameBody(avatar.body_input, body) ? avatar.modelUrl ?? null : null,
     outdated: avatar.status === 'ready' && !sameBody(avatar.body_input, body),
     busy, error, loggedIn: Boolean(userId), generate,

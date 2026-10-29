@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test:clad": "node scripts/test_clad_avatar.mjs",
+    "test:ui": "node scripts/test_ui_flows.mjs",
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",

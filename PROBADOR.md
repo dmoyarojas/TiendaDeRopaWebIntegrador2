@@ -10,6 +10,8 @@ La integración del cuerpo personalizado de Clad se activa siguiendo [CLAD.md](C
 4. En **Mi Avatar**, el cliente ingresa sus medidas. Si inició sesión, se guardan en `medidas_usuario`; sin sesión quedan solo en la sesión del navegador.
 5. En **Probador virtual**, elige producto y talla para ver el ajuste estimado por zona y girar el avatar 3D.
 
+El botón **Probarse** del inicio y del catálogo abre el probador con esa prenda seleccionada, incluso si primero hay que iniciar sesión. Se conserva el mismo cuerpo Clad al cambiar prenda o talla; se muestra la foto y la talla elegida junto al visor, aunque la ropa aún no tenga simulación 3D. Los fallos al recuperar el avatar se muestran con una opción de reintento. Las medidas de un avatar ya generado sirven para recuperar el perfil si falta la copia en sesión.
+
 ## Medidas de referencia cargadas
 
 El catálogo de Supabase tiene tallas S, M, L y XL con medidas promedio de demostración para los seis productos que existían el 26 de octubre de 2026. Las cifras están en `src/data/medidasReferencia.json`. Pecho, cintura y cadera son anchos de la prenda extendida en plano; hombros y largo se miden una vez. El probador señala cuando las medidas coinciden con estas referencias. No son medidas tomadas de las prendas reales.

@@ -5,6 +5,8 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { supabase } from './lib/supabase'
 import GarmentMeasurementEditor from './components/GarmentMeasurementEditor'
 import { BODY_STORAGE_KEY } from './lib/fitting'
+import AdminOrdersPanel from './components/AdminOrdersPanel'
+import { buildAdminOrderRows } from './lib/adminOrders'
 
 const FittingExperience = lazy(() => import('./components/FittingExperience'))
 
@@ -357,7 +359,7 @@ function MarqueeBanner() {
 
 // ─── Home Page ────────────────────────────────────────────────────────────────
 
-function HomePage({ setPage, products }: { setPage: (p: Page) => void; products: Product[] }) {
+function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; products: Product[]; onTryOn: (product: Product) => void }) {
   const heroRef = useRef<HTMLDivElement>(null)
   const heroTextRef = useRef<HTMLDivElement>(null)
   const featuresRef = useRef<HTMLDivElement>(null)
@@ -489,7 +491,7 @@ function HomePage({ setPage, products }: { setPage: (p: Page) => void; products:
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {featured.map(p => (
-              <ProductCard key={p.id} product={p} onTryOn={() => setPage('tryon')} compact />
+              <ProductCard key={p.id} product={p} onTryOn={() => onTryOn(p)} compact />
             ))}
           </div>
           <button onClick={() => setPage('products')} className="mt-8 sm:hidden text-sm font-500 text-[#6B6860] hover:text-[#0D0D0D]">
@@ -642,7 +644,7 @@ function ProductCard({
 
 // ─── Products Page ────────────────────────────────────────────────────────────
 
-function ProductsPage({ setPage, addToCart, products }: { setPage: (p: Page) => void; addToCart: (p: Product, size: string) => boolean; products: Product[] }) {
+function ProductsPage({ setPage, addToCart, products, onTryOn }: { setPage: (p: Page) => void; addToCart: (p: Product, size: string) => boolean; products: Product[]; onTryOn: (product: Product) => void }) {
   const [activeCategory, setActiveCategory] = useState('Todos')
   const [search, setSearch] = useState('')
   const gridRef = useRef<HTMLDivElement>(null)
@@ -707,7 +709,7 @@ function ProductsPage({ setPage, addToCart, products }: { setPage: (p: Page) => 
         <div ref={gridRef} className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filtered.map(p => (
             <div key={p.id} className="product-item">
-              <ProductCard product={p} onAddToCart={addToCart} onTryOn={() => setPage('tryon')} />
+              <ProductCard product={p} onAddToCart={addToCart} onTryOn={() => onTryOn(p)} />
             </div>
           ))}
         </div>
@@ -2137,18 +2139,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
     { label: 'Devoluciones', value: dbReturns.length.toString(), delta: 'N/A', tone: 'rose' },
   ]
 
-  const orderProductRows = dbOrders.flatMap(order => {
-    const items = order.pedido_productos ?? []
-    const orderInfo = {
-      order: order.numero_orden || order.id.substring(0, 8),
-      customer: order.perfiles ? `${order.perfiles.nombre || ''} ${order.perfiles.apellido || ''}`.trim() : 'Desconocido',
-      date: new Date(order.creado_el).toLocaleDateString('es-PE'),
-      total: formatPrice(Number(order.monto_total) / PRICE_STORAGE_SCALE),
-    }
-    return items.length
-      ? items.map((item: any) => ({ ...orderInfo, item }))
-      : [{ ...orderInfo, item: null }]
-  })
+  const orderProductRows = buildAdminOrderRows(dbOrders, PRICE_STORAGE_SCALE)
 
   const productRows = dbProducts.map(prod => ({
     id: prod.id,
@@ -2318,71 +2309,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
     </div>
   )
 
-  const renderOrders = () => (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Operaciones</p>
-          <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Pedidos recientes</h1>
-        </div>
-        <button onClick={() => void loadData()} className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase tracking-wide text-[#0D0D0D] hover:border-[#0D0D0D] transition-colors">
-          Actualizar
-        </button>
-      </div>
-
-      <div className="bg-white border border-[#E6E1D8] overflow-hidden">
-        <table className="min-w-full text-left">
-          <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
-            <tr>
-              <th className="px-4 py-3 font-600">Orden</th>
-              <th className="px-4 py-3 font-600">Código del artículo</th>
-              <th className="px-4 py-3 font-600">Producto</th>
-              <th className="px-4 py-3 font-600">Cliente</th>
-              <th className="px-4 py-3 font-600">Fecha</th>
-              <th className="px-4 py-3 font-600">Total</th>
-              <th className="px-4 py-3 font-600">Estado del artículo</th>
-              <th className="px-4 py-3 font-600">Actualizar estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orderProductRows.map((row, index) => {
-              const item = row.item
-              const itemStatus = item?.estado ?? ''
-              const displayStatus = itemStatus ? itemStatus.charAt(0).toUpperCase() + itemStatus.slice(1) : 'Sin artículos'
-              return (
-                <tr key={item?.id ?? `${row.order}-${index}`} className="border-t border-[#EEE8E1] text-sm text-[#0D0D0D]">
-                  <td className="px-4 py-3 font-600">{row.order}</td>
-                  <td className="px-4 py-3">
-                    {item ? <span className="font-mono text-xs">{item.codigo_producto}</span> : <span className="text-[#6B6860]">—</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {item ? <>{item.nombre_producto}<span className="block text-xs text-[#6B6860]">Talla {item.talla}</span></> : <span className="text-[#6B6860]">Pedido antiguo sin detalle de artículos</span>}
-                  </td>
-                  <td className="px-4 py-3">{row.customer}</td>
-                  <td className="px-4 py-3 text-[#6B6860]">{row.date}</td>
-                  <td className="px-4 py-3 font-600">{row.total}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full ${getStatusClasses(displayStatus)}`}>{displayStatus}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <select
-                      aria-label={`Estado de ${item?.nombre_producto ?? `pedido ${row.order}`}${item ? `, código ${item.codigo_producto}` : ''}`}
-                      value={itemStatus}
-                      disabled={!item}
-                      onChange={event => item && void updateOrderItemStatus(item.id, event.target.value)}
-                      className="border border-[#DDD9D0] bg-white px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-[#F5F1ED]"
-                    >
-                      {item ? ['pendiente', 'en preparación', 'enviado', 'entregado', 'cancelado'].map(status => <option key={status} value={status}>{status}</option>) : <option value="">Sin artículos</option>}
-                    </select>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
+  const renderOrders = () => <AdminOrdersPanel rows={orderProductRows} loading={isLoading} onRefresh={loadData} onStatusChange={updateOrderItemStatus} />
 
   const renderProducts = () => (
     <div className="space-y-5">
@@ -2924,6 +2851,7 @@ export default function App() {
   const [page, setPage] = useState<Page>('home')
   const [session, setSession] = useState<SessionInfo | null>(() => getSessionInfo())
   const [pendingPage, setPendingPage] = useState<Page | null>(null)
+  const [tryOnProductId, setTryOnProductId] = useState<string | number | null>(null)
   const [cart, setCart] = useState<CartItem[]>([])
   const [products, setProducts] = useState<Product[]>(PRODUCTS)
 
@@ -2971,6 +2899,10 @@ export default function App() {
   }, [session])
 
   const clearPendingPage = useCallback(() => setPendingPage(null), [])
+  const openTryOn = (product: Product) => {
+    setTryOnProductId(product.id)
+    navigatePage('tryon')
+  }
 
   const loadProducts = useCallback(async () => {
     const { data, error } = await fetchProductsFromSupabase()
@@ -3038,15 +2970,15 @@ export default function App() {
       {!hideNav && <Navbar page={page} setPage={navigatePage} cartCount={cartCount} session={session} />}
 
       <main>
-        {page === 'home' && <HomePage setPage={navigatePage} products={products} />}
-        {page === 'products' && <ProductsPage setPage={navigatePage} addToCart={addToCart} products={products} />}
+        {page === 'home' && <HomePage setPage={navigatePage} products={products} onTryOn={openTryOn} />}
+        {page === 'products' && <ProductsPage setPage={navigatePage} addToCart={addToCart} products={products} onTryOn={openTryOn} />}
         {page === 'cart' && <CartPage cart={cart} setCart={setCart} setPage={navigatePage} onCheckout={() => navigatePage('checkout')} />}
         {page === 'login' && <LoginPage setPage={setPage} returnPage={pendingPage} onAuthenticated={clearPendingPage} />}
         {page === 'register' && <RegisterPage setPage={setPage} returnPage={pendingPage} onAuthenticated={clearPendingPage} />}
         {page === 'account' && <AccountPage session={session} setPage={navigatePage} onLogout={handleLogout} />}
         {page === 'forgot-password' && <ForgotPasswordPage setPage={setPage} />}
         {(page === 'avatar' || page === 'tryon') && <Suspense fallback={<div className="min-h-screen bg-[#FAF8F5] pt-28 text-center text-[#6B6860]">Cargando probador 3D…</div>}>
-          <FittingExperience mode={page === 'avatar' ? 'profile' : 'tryon'} products={products} setPage={navigatePage} />
+          <FittingExperience mode={page === 'avatar' ? 'profile' : 'tryon'} products={products} setPage={navigatePage} initialProductId={tryOnProductId} onProductChange={setTryOnProductId} />
         </Suspense>}
         {page === 'checkout' && <CheckoutPage cart={cart} onSuccess={handleCheckoutSuccess} setPage={navigatePage} />}
         {page === 'admin' && <AdminDashboardPage setPage={navigatePage} onProductsChanged={loadProducts} session={session} />}
