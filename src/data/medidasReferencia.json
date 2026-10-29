@@ -1,0 +1,26 @@
+{
+  "top": {
+    "S": { "ancho_pecho_cm": 50, "ancho_cintura_cm": 48, "ancho_hombros_cm": 43, "largo_total_cm": 68 },
+    "M": { "ancho_pecho_cm": 53, "ancho_cintura_cm": 51, "ancho_hombros_cm": 45, "largo_total_cm": 70 },
+    "L": { "ancho_pecho_cm": 56, "ancho_cintura_cm": 54, "ancho_hombros_cm": 47, "largo_total_cm": 72 },
+    "XL": { "ancho_pecho_cm": 59, "ancho_cintura_cm": 57, "ancho_hombros_cm": 49, "largo_total_cm": 74 }
+  },
+  "blazer": {
+    "S": { "ancho_pecho_cm": 54, "ancho_cintura_cm": 51, "ancho_hombros_cm": 44, "largo_total_cm": 70 },
+    "M": { "ancho_pecho_cm": 57, "ancho_cintura_cm": 54, "ancho_hombros_cm": 46, "largo_total_cm": 72 },
+    "L": { "ancho_pecho_cm": 60, "ancho_cintura_cm": 57, "ancho_hombros_cm": 48, "largo_total_cm": 74 },
+    "XL": { "ancho_pecho_cm": 63, "ancho_cintura_cm": 60, "ancho_hombros_cm": 50, "largo_total_cm": 76 }
+  },
+  "coat": {
+    "S": { "ancho_pecho_cm": 56, "ancho_cintura_cm": 54, "ancho_hombros_cm": 45, "largo_total_cm": 85 },
+    "M": { "ancho_pecho_cm": 59, "ancho_cintura_cm": 57, "ancho_hombros_cm": 47, "largo_total_cm": 87 },
+    "L": { "ancho_pecho_cm": 62, "ancho_cintura_cm": 60, "ancho_hombros_cm": 49, "largo_total_cm": 89 },
+    "XL": { "ancho_pecho_cm": 65, "ancho_cintura_cm": 63, "ancho_hombros_cm": 51, "largo_total_cm": 91 }
+  },
+  "pants": {
+    "S": { "ancho_cintura_cm": 37, "ancho_cadera_cm": 49, "largo_total_cm": 100, "largo_tiro_cm": 26 },
+    "M": { "ancho_cintura_cm": 40, "ancho_cadera_cm": 52, "largo_total_cm": 102, "largo_tiro_cm": 27 },
+    "L": { "ancho_cintura_cm": 43, "ancho_cadera_cm": 55, "largo_total_cm": 104, "largo_tiro_cm": 28 },
+    "XL": { "ancho_cintura_cm": 46, "ancho_cadera_cm": 58, "largo_total_cm": 106, "largo_tiro_cm": 29 }
+  }
+}

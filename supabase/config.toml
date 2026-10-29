@@ -1,0 +1,5 @@
+project_id = "velour"
+
+[functions.clad-avatar]
+verify_jwt = true
+
