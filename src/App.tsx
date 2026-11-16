@@ -14,7 +14,7 @@ gsap.registerPlugin(ScrollTrigger)
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'account' | 'avatar' | 'tryon' | 'checkout' | 'admin' | 'forgot-password'
+type Page = 'home' | 'products' | 'cart' | 'login' | 'register' | 'account' | 'avatar' | 'tryon' | 'checkout' | 'admin' | 'returns' | 'forgot-password'
 
 interface Product {
   id: number | string
@@ -29,6 +29,17 @@ interface Product {
 interface CartItem extends Product {
   qty: number
   size: string
+}
+
+interface ShippingDetails {
+  name: string
+  lastname: string
+  email: string
+  phone: string
+  address: string
+  city: string
+  dept: string
+  zip: string
 }
 
 interface UserMeasurements {
@@ -64,9 +75,27 @@ interface ReturnRow {
   productImage?: string
   reason: string
   details?: string
+  changeCode?: string
+  receiptPath?: string
+  imagePath?: string
   date: string
   status: string
   action: string
+}
+
+interface ReturnOrderItem {
+  id: string
+  nombre_producto: string
+  talla: string
+  codigo_producto: string
+}
+
+interface ReturnOrder {
+  id: string
+  numero_orden: string | null
+  codigo_devolucion: string | null
+  creado_el: string
+  pedido_productos: ReturnOrderItem[]
 }
 
 const DEFAULT_MEASUREMENTS: UserMeasurements = {
@@ -160,6 +189,17 @@ function formatPrice(n: number) {
   return new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(n)
 }
 
+function escapeHtml(value: string) {
+  const replacements: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }
+  return value.replace(/[&<>"']/g, character => replacements[character] ?? character)
+}
+
 function createSlug(value: string) {
   return value
     .normalize('NFD')
@@ -170,22 +210,54 @@ function createSlug(value: string) {
     .replace(/^-|-$/g, '')
 }
 
-async function fetchProductsFromSupabase() {
+async function fetchProductsFromSupabase(includeInactive = false) {
   const withImages = await supabase
     .from('productos')
-    .select('id, nombre, precio_base, stock, etiqueta, imagen_url, categorias(id, nombre)')
+    .select('id, nombre, precio_base, stock, etiqueta, imagen_url, activo, categorias(id, nombre)')
     .order('id')
 
-  const missingImageColumn = withImages.error?.message.includes('imagen_url')
-    && (withImages.error.code === '42703' || withImages.error.code === 'PGRST204')
-  if (!missingImageColumn) {
-    return withImages
+  const missingColumnError = (error: typeof withImages.error) => (
+    error?.code === '42703' || error?.code === 'PGRST204'
+  )
+  const missingArchiveColumn = missingColumnError(withImages.error)
+    && withImages.error?.message.includes('activo')
+  if (missingArchiveColumn) {
+    const legacyWithImages = await supabase
+      .from('productos')
+      .select('id, nombre, precio_base, stock, etiqueta, imagen_url, categorias(id, nombre)')
+      .order('id')
+
+    if (!missingColumnError(legacyWithImages.error) || !legacyWithImages.error?.message.includes('imagen_url')) {
+      return legacyWithImages
+    }
+
+    return supabase
+      .from('productos')
+      .select('id, nombre, precio_base, stock, etiqueta, categorias(id, nombre)')
+      .order('id')
   }
 
-  return supabase
-    .from('productos')
-    .select('id, nombre, precio_base, stock, etiqueta, categorias(id, nombre)')
-    .order('id')
+  const missingImageColumn = missingColumnError(withImages.error)
+    && withImages.error?.message.includes('imagen_url')
+  if (missingImageColumn) {
+    const withoutImages = await supabase
+      .from('productos')
+      .select('id, nombre, precio_base, stock, etiqueta, activo, categorias(id, nombre)')
+      .order('id')
+    return {
+      ...withoutImages,
+      data: includeInactive
+        ? withoutImages.data
+        : withoutImages.data?.filter(product => product.activo !== false) ?? null,
+    }
+  }
+
+  return {
+    ...withImages,
+    data: includeInactive
+      ? withImages.data
+      : withImages.data?.filter(product => product.activo !== false) ?? null,
+  }
 }
 
 function useGsapEntrance(deps: unknown[] = []) {
@@ -1068,9 +1140,14 @@ function AccountPage({ session, setPage, onLogout }: { session: SessionInfo | nu
 
         <div className="mt-8 flex flex-col gap-3">
           {session?.role === 'client' && (
-            <button onClick={() => setPage('avatar')} className="w-full bg-[#C9A96E] py-3 text-sm font-700 uppercase tracking-wide text-[#0D0D0D] hover:bg-[#b8955c]">
-              Ver o editar mi avatar
-            </button>
+            <>
+              <button onClick={() => setPage('avatar')} className="w-full bg-[#C9A96E] py-3 text-sm font-700 uppercase tracking-wide text-[#0D0D0D] hover:bg-[#b8955c]">
+                Ver o editar mi avatar
+              </button>
+              <button onClick={() => setPage('returns')} className="w-full border border-[#DDD9D0] py-3 text-sm font-700 uppercase tracking-wide text-[#0D0D0D] hover:border-[#C9A96E]">
+                Solicitar cambio o devolución
+              </button>
+            </>
           )}
           {!session && (
             <button onClick={() => setPage('login')} className="w-full bg-[#0D0D0D] py-3 text-sm font-700 uppercase tracking-wide text-white hover:bg-[#C9A96E] hover:text-[#0D0D0D]">
@@ -1086,6 +1163,225 @@ function AccountPage({ session, setPage, onLogout }: { session: SessionInfo | nu
             Volver a la tienda
           </button>
         </div>
+      </section>
+    </div>
+  )
+}
+
+function ReturnRequestPage({ setPage }: { setPage: (page: Page) => void }) {
+  const [orders, setOrders] = useState<ReturnOrder[]>([])
+  const [orderId, setOrderId] = useState('')
+  const [itemId, setItemId] = useState('')
+  const [form, setForm] = useState({ name: '', email: '', phone: '', changeCode: '', reason: '', otherReason: '' })
+  const [productImage, setProductImage] = useState<File | null>(null)
+  const [receipt, setReceipt] = useState<File | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const pageRef = useGsapEntrance([])
+
+  const selectedOrder = orders.find(order => order.id === orderId)
+  const eligibleOrders = orders.filter(order => order.numero_orden && order.codigo_devolucion && order.pedido_productos?.length)
+  const selectedItems = selectedOrder?.pedido_productos ?? []
+
+  useEffect(() => {
+    let active = true
+
+    async function loadCustomerData() {
+      try {
+        const { data: { user }, error: userError } = await supabase.auth.getUser()
+        if (userError) throw userError
+        if (!user) throw new Error('Inicia sesión para solicitar un cambio o devolución.')
+
+        const [profileResult, ordersResult] = await Promise.all([
+          supabase.from('perfiles').select('nombre, apellido, correo').eq('id', user.id).maybeSingle(),
+          supabase.from('pedidos')
+            .select('id, numero_orden, codigo_devolucion, creado_el, pedido_productos(id, nombre_producto, talla, codigo_producto)')
+            .eq('usuario_id', user.id)
+            .order('creado_el', { ascending: false }),
+        ])
+        const queryError = profileResult.error || ordersResult.error
+        if (queryError) throw queryError
+
+        if (!active) return
+        const customerOrders = (ordersResult.data ?? []) as ReturnOrder[]
+        setOrders(customerOrders)
+        const firstOrder = customerOrders.find(order => order.numero_orden && order.codigo_devolucion && order.pedido_productos?.length)
+        setOrderId(firstOrder?.id ?? '')
+        setItemId(firstOrder?.pedido_productos?.[0]?.id ?? '')
+        setForm(current => ({
+          ...current,
+          name: [profileResult.data?.nombre, profileResult.data?.apellido].filter(Boolean).join(' '),
+          email: profileResult.data?.correo || user.email || '',
+          changeCode: firstOrder?.codigo_devolucion ?? '',
+        }))
+      } catch (loadError) {
+        console.error('Error cargando los datos para solicitar un cambio:', loadError)
+        if (active) setError(loadError instanceof Error ? loadError.message : 'No se pudieron cargar tus datos y pedidos.')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+
+    void loadCustomerData()
+    return () => { active = false }
+  }, [])
+
+  function handleOrderChange(nextOrderId: string) {
+    const order = orders.find(item => item.id === nextOrderId)
+    setOrderId(nextOrderId)
+    setItemId(order?.pedido_productos?.[0]?.id ?? '')
+    setForm(current => ({ ...current, changeCode: order?.codigo_devolucion ?? '' }))
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setError('')
+    if (!selectedOrder?.numero_orden || !itemId || !productImage || !receipt) {
+      setError('Selecciona el pedido y artículo, y adjunta la imagen del producto y la boleta.')
+      return
+    }
+    if (productImage.size > 5 * 1024 * 1024 || receipt.size > 5 * 1024 * 1024) {
+      setError('Cada archivo debe pesar como máximo 5 MB.')
+      return
+    }
+
+    const allowedImageTypes = ['image/jpeg', 'image/png', 'image/webp']
+    const allowedReceiptTypes = [...allowedImageTypes, 'application/pdf']
+    if (!allowedImageTypes.includes(productImage.type) || !allowedReceiptTypes.includes(receipt.type)) {
+      setError('La foto debe ser JPG, PNG o WebP; la boleta puede ser una imagen o un PDF.')
+      return
+    }
+
+    setSubmitting(true)
+    const uploadedPaths: string[] = []
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError) throw userError
+      if (!user) throw new Error('Tu sesión expiró. Inicia sesión nuevamente.')
+
+      const extensionFor = (file: File) => file.type === 'application/pdf'
+        ? 'pdf'
+        : file.type === 'image/png'
+          ? 'png'
+          : file.type === 'image/webp'
+            ? 'webp'
+            : 'jpg'
+      const imagePath = `${user.id}/${crypto.randomUUID()}.${extensionFor(productImage)}`
+      const receiptPath = `${user.id}/${crypto.randomUUID()}.${extensionFor(receipt)}`
+      const storage = supabase.storage.from('solicitudes-devolucion')
+
+      const imageUpload = await storage.upload(imagePath, productImage, { contentType: productImage.type, upsert: false })
+      if (imageUpload.error) throw imageUpload.error
+      uploadedPaths.push(imagePath)
+
+      const receiptUpload = await storage.upload(receiptPath, receipt, { contentType: receipt.type, upsert: false })
+      if (receiptUpload.error) throw receiptUpload.error
+      uploadedPaths.push(receiptPath)
+
+      const { error: requestError } = await supabase.rpc('crear_solicitud_devolucion', {
+        p_numero_orden: selectedOrder.numero_orden,
+        p_codigo_cambio: form.changeCode.trim(),
+        p_pedido_producto_id: itemId,
+        p_nombre_cliente: form.name.trim(),
+        p_correo_cliente: form.email.trim(),
+        p_telefono_cliente: form.phone.trim(),
+        p_motivo: form.reason,
+        p_detalle_motivo: form.reason === 'Otro' ? form.otherReason.trim() : null,
+        p_imagen_path: imagePath,
+        p_boleta_path: receiptPath,
+      })
+      if (requestError) throw requestError
+      setSubmitted(true)
+    } catch (submitError) {
+      console.error('Error enviando la solicitud de devolución:', submitError)
+      if (uploadedPaths.length) {
+        const { error: cleanupError } = await supabase.storage.from('solicitudes-devolucion').remove(uploadedPaths)
+        if (cleanupError) console.error('No se pudieron limpiar los archivos de una solicitud fallida:', cleanupError)
+      }
+      const message = submitError instanceof Error ? submitError.message : 'Error desconocido.'
+      setError(message.includes('crear_solicitud_devolucion') || message.includes('solicitudes-devolucion')
+        ? `${message} Ejecuta la sección de solicitudes de devolución de actualizaciones_db.sql en Supabase.`
+        : message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div ref={pageRef} className="min-h-screen bg-[#FAF8F5] pt-16 px-4 py-12">
+      <section className="mx-auto max-w-2xl border border-[#DDD9D0] bg-white p-6 sm:p-8">
+        <p className="mb-2 text-xs font-600 uppercase tracking-[0.3em] text-[#C9A96E]">Atención al cliente</p>
+        <h1 className="mb-2 font-display text-3xl font-700 text-[#0D0D0D]">Solicitud de cambio o devolución</h1>
+        <p className="mb-6 text-sm text-[#6B6860]">Completa los datos y adjunta una foto del producto junto con la boleta de compra.</p>
+
+        {submitted ? (
+          <div className="space-y-4 border border-green-200 bg-green-50 p-5 text-sm text-green-900" role="status">
+            <p className="font-600">Tu solicitud fue enviada correctamente. El equipo de VELOUR la revisará desde el panel de administración.</p>
+            <button type="button" onClick={() => setPage('account')} className="font-700 underline">Volver a mi cuenta</button>
+          </div>
+        ) : (
+          <form onSubmit={event => void handleSubmit(event)} className="space-y-4">
+            <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Nombre completo
+              <input required autoComplete="name" value={form.name} onChange={event => setForm(current => ({ ...current, name: event.target.value }))} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]" />
+            </label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Correo electrónico
+                <input required type="email" autoComplete="email" value={form.email} onChange={event => setForm(current => ({ ...current, email: event.target.value }))} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]" />
+              </label>
+              <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Número de celular
+                <input required type="tel" autoComplete="tel" value={form.phone} onChange={event => setForm(current => ({ ...current, phone: event.target.value }))} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]" />
+              </label>
+            </div>
+
+            {loading ? (
+              <p role="status" className="border border-[#DDD9D0] bg-[#FAF8F5] p-3 text-sm text-[#6B6860]">Cargando tus pedidos…</p>
+            ) : eligibleOrders.length ? (
+              <>
+                <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Número de orden
+                  <select required value={orderId} onChange={event => handleOrderChange(event.target.value)} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]">
+                    {eligibleOrders.map(order => <option key={order.id} value={order.id}>{order.numero_orden} · {new Date(order.creado_el).toLocaleDateString('es-PE')}</option>)}
+                  </select>
+                </label>
+                <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Artículo de la orden
+                  <select required value={itemId} onChange={event => setItemId(event.target.value)} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]">
+                    {selectedItems.map(item => <option key={item.id} value={item.id}>{item.nombre_producto} · Talla {item.talla} · {item.codigo_producto}</option>)}
+                  </select>
+                </label>
+                <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Código de cambio
+                  <input required value={form.changeCode} onChange={event => setForm(current => ({ ...current, changeCode: event.target.value }))} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]" />
+                </label>
+              </>
+            ) : (
+              <p role="status" className="border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">No encontramos pedidos con código de cambio disponible en tu cuenta.</p>
+            )}
+
+            <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Motivo de cambio
+              <select required value={form.reason} onChange={event => setForm(current => ({ ...current, reason: event.target.value }))} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]">
+                <option value="">Selecciona un motivo</option>
+                {['Talla incorrecta', 'Defecto de fábrica', 'No era lo que esperaba', 'Producto equivocado recibido', 'Otro'].map(reason => <option key={reason} value={reason}>{reason}</option>)}
+              </select>
+            </label>
+            {form.reason === 'Otro' && (
+              <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Describe el motivo
+                <textarea required rows={3} value={form.otherReason} onChange={event => setForm(current => ({ ...current, otherReason: event.target.value }))} className="mt-1.5 w-full border border-[#DDD9D0] bg-white px-3 py-3 text-sm normal-case text-[#0D0D0D]" />
+              </label>
+            )}
+            <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Adjunta imagen del producto (JPG, PNG o WebP; máx. 5 MB)
+              <input required type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setProductImage(event.target.files?.[0] ?? null)} className="mt-1.5 block w-full border border-[#DDD9D0] px-3 py-3 text-sm normal-case file:mr-3 file:border-0 file:bg-[#F2EFE9] file:px-3 file:py-1.5" />
+            </label>
+            <label className="block text-xs font-600 uppercase tracking-wide text-[#6B6860]">Adjunta la boleta (imagen o PDF; máx. 5 MB)
+              <input required type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={event => setReceipt(event.target.files?.[0] ?? null)} className="mt-1.5 block w-full border border-[#DDD9D0] px-3 py-3 text-sm normal-case file:mr-3 file:border-0 file:bg-[#F2EFE9] file:px-3 file:py-1.5" />
+            </label>
+
+            {error && <p role="alert" className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
+            <div className="flex flex-col gap-3 pt-2 sm:flex-row">
+              <button type="button" onClick={() => setPage('account')} className="flex-1 border border-[#DDD9D0] px-4 py-3 text-sm font-600 uppercase tracking-wide text-[#6B6860]">Cancelar</button>
+              <button type="submit" disabled={loading || submitting || !eligibleOrders.length} className="flex-1 bg-[#0D0D0D] px-4 py-3 text-sm font-700 uppercase tracking-wide text-white hover:bg-[#C9A96E] hover:text-[#0D0D0D] disabled:opacity-50">{submitting ? 'Enviando solicitud…' : 'Enviar solicitud'}</button>
+            </div>
+          </form>
+        )}
       </section>
     </div>
   )
@@ -1355,17 +1651,66 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
   const [step, setStep] = useState<CheckoutStep>('shipping')
   const [processing, setProcessing] = useState(false)
   const [paymentError, setPaymentError] = useState('')
+  const [shippingError, setShippingError] = useState('')
+  const [receiptError, setReceiptError] = useState('')
+  const [savingShipping, setSavingShipping] = useState(false)
+  const [loadingShipping, setLoadingShipping] = useState(true)
+  const [rememberShipping, setRememberShipping] = useState(true)
   const [payMethod, setPayMethod] = useState<'card' | 'transfer' | 'yape'>('card')
-  const [shipping, setShipping] = useState({ name: '', lastname: '', email: '', phone: '', address: '', city: '', dept: '', zip: '' })
+  const [shipping, setShipping] = useState<ShippingDetails>({ name: '', lastname: '', email: '', phone: '', address: '', city: '', dept: '', zip: '' })
   const [card, setCard] = useState({ number: '', name: '', expiry: '', cvv: '' })
   const [orderNum] = useState(() => `VL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`)
   const [returnCode] = useState(() => `DEV-${crypto.randomUUID().slice(0, 8).toUpperCase()}`)
+  const [orderCreatedAt, setOrderCreatedAt] = useState('')
   const pageRef = useGsapEntrance([])
   const panelRef = useRef<HTMLDivElement>(null)
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0)
   const shipping_fee = subtotal >= 200 ? 0 : 15
   const total = subtotal + shipping_fee
+
+  useEffect(() => {
+    let active = true
+
+    async function loadSavedShipping() {
+      try {
+        const { data: { user }, error: userError } = await supabase.auth.getUser()
+        if (userError) throw userError
+        if (!user) throw new Error('No se pudo identificar tu cuenta.')
+
+        const { data, error } = await supabase
+          .from('direcciones_envio')
+          .select('nombre, apellido, correo, telefono, direccion, ciudad, distrito, codigo_postal')
+          .eq('usuario_id', user.id)
+          .maybeSingle()
+        if (error) throw error
+
+        if (!active) return
+        setShipping(current => ({
+          ...current,
+          email: user.email ?? current.email,
+          ...(data ? {
+            name: data.nombre,
+            lastname: data.apellido,
+            email: data.correo || user.email || '',
+            phone: data.telefono,
+            address: data.direccion,
+            city: data.ciudad,
+            dept: data.distrito,
+            zip: data.codigo_postal,
+          } : {}),
+        }))
+      } catch (error) {
+        console.error('Error cargando los datos de envío guardados:', error)
+        if (active) setShippingError('No se pudieron cargar tus datos guardados. Puedes ingresarlos manualmente y volver a intentar guardarlos.')
+      } finally {
+        if (active) setLoadingShipping(false)
+      }
+    }
+
+    void loadSavedShipping()
+    return () => { active = false }
+  }, [])
 
   function animateStep(next: CheckoutStep) {
     if (!panelRef.current) { setStep(next); return }
@@ -1375,9 +1720,114 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
     }})
   }
 
-  function handleShipping(e: React.FormEvent) {
+  async function handleShipping(e: React.FormEvent) {
     e.preventDefault()
-    animateStep('payment')
+    setShippingError('')
+    setSavingShipping(true)
+    try {
+      if (rememberShipping) {
+        const { data: { user }, error: userError } = await supabase.auth.getUser()
+        if (userError) throw userError
+        if (!user) throw new Error('Inicia sesión nuevamente para guardar tus datos de envío.')
+
+        const { error } = await supabase.from('direcciones_envio').upsert({
+          usuario_id: user.id,
+          nombre: shipping.name.trim(),
+          apellido: shipping.lastname.trim(),
+          correo: shipping.email.trim(),
+          telefono: shipping.phone.trim(),
+          direccion: shipping.address.trim(),
+          ciudad: shipping.city.trim(),
+          distrito: shipping.dept.trim(),
+          codigo_postal: shipping.zip.trim(),
+          actualizado_el: new Date().toISOString(),
+        }, { onConflict: 'usuario_id' })
+        if (error) throw error
+      }
+      animateStep('payment')
+    } catch (error) {
+      console.error('Error guardando los datos de envío:', error)
+      const message = error instanceof Error ? error.message : 'Error desconocido.'
+      const needsDatabaseSetup = message.includes('direcciones_envio')
+      setShippingError(`No se pudieron guardar tus datos de envío. ${needsDatabaseSetup ? 'Ejecuta la sección de direcciones_envio del archivo actualizaciones_db.sql en Supabase.' : message} Desmarca la opción para continuar sin guardarlos.`)
+    } finally {
+      setSavingShipping(false)
+    }
+  }
+
+  function downloadReceipt() {
+    setReceiptError('')
+    const receiptWindow = window.open('', '_blank')
+    if (!receiptWindow) {
+      setReceiptError('El navegador bloqueó la ventana de la boleta. Permite las ventanas emergentes e inténtalo nuevamente.')
+      return
+    }
+
+    receiptWindow.opener = null
+    const itemRows = cart.map(item => `
+      <tr>
+        <td>${escapeHtml(item.name)}</td>
+        <td>${escapeHtml(item.size)}</td>
+        <td class="number">${item.qty}</td>
+        <td class="number">${escapeHtml(formatPrice(item.price))}</td>
+        <td class="number">${escapeHtml(formatPrice(item.price * item.qty))}</td>
+      </tr>
+    `).join('')
+    const address = [shipping.address, shipping.dept, shipping.city, shipping.zip].filter(Boolean).join(', ')
+    const receiptHtml = `<!doctype html>
+      <html lang="es">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Boleta ${escapeHtml(orderNum)}</title>
+          <style>
+            body { color: #202020; font: 14px Arial, sans-serif; margin: 40px auto; max-width: 760px; padding: 0 24px; }
+            h1 { font-size: 28px; letter-spacing: 3px; margin: 0; }
+            h2 { font-size: 18px; margin: 30px 0 12px; }
+            .muted { color: #666; }
+            .header, .totals div { display: flex; justify-content: space-between; gap: 20px; }
+            .header { border-bottom: 2px solid #c9a96e; padding-bottom: 18px; }
+            .details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border-bottom: 1px solid #ddd; padding: 10px 6px; text-align: left; }
+            th { background: #f5f1ed; }
+            .number { text-align: right; white-space: nowrap; }
+            .totals { border-top: 1px solid #aaa; margin: 16px 0 0 auto; max-width: 300px; padding-top: 8px; }
+            .totals div { padding: 5px 0; }
+            .grand-total { border-top: 1px solid #aaa; font-size: 18px; font-weight: bold; margin-top: 6px; padding-top: 10px !important; }
+            @media print { body { margin: 0 auto; padding: 0; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div><h1>VELOUR</h1><p class="muted">Comprobante de compra</p></div>
+            <div><strong>Boleta ${escapeHtml(orderNum)}</strong><p>${escapeHtml(orderCreatedAt)}</p></div>
+          </div>
+          <h2>Datos del cliente y envío</h2>
+          <div class="details">
+            <div><strong>Cliente:</strong> ${escapeHtml(`${shipping.name} ${shipping.lastname}`.trim())}</div>
+            <div><strong>Correo:</strong> ${escapeHtml(shipping.email)}</div>
+            <div><strong>Teléfono:</strong> ${escapeHtml(shipping.phone)}</div>
+            <div><strong>Dirección:</strong> ${escapeHtml(address)}</div>
+            <div><strong>Método de pago:</strong> ${escapeHtml(payMethod === 'card' ? 'Tarjeta' : payMethod === 'transfer' ? 'Transferencia' : 'Yape')}</div>
+            <div><strong>Código de devolución:</strong> ${escapeHtml(returnCode)}</div>
+          </div>
+          <h2>Detalle de compra</h2>
+          <table>
+            <thead><tr><th>Producto</th><th>Talla</th><th class="number">Cantidad</th><th class="number">Precio unitario</th><th class="number">Importe</th></tr></thead>
+            <tbody>${itemRows}</tbody>
+          </table>
+          <div class="totals">
+            <div><span>Subtotal</span><span>${escapeHtml(formatPrice(subtotal))}</span></div>
+            <div><span>Envío</span><span>${shipping_fee === 0 ? 'Gratis' : escapeHtml(formatPrice(shipping_fee))}</span></div>
+            <div class="grand-total"><span>Total pagado</span><span>${escapeHtml(formatPrice(total))}</span></div>
+          </div>
+        </body>
+      </html>`
+    receiptWindow.document.write(receiptHtml)
+    receiptWindow.document.close()
+    receiptWindow.focus()
+    receiptWindow.print()
   }
 
   const spinnerRef = useRef<SVGSVGElement>(null)
@@ -1407,6 +1857,7 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
         })),
       })
       if (error) throw error
+      setOrderCreatedAt(new Date().toLocaleString('es-PE'))
       animateStep('confirm')
     } catch (error) {
       console.error('Error registrando la compra:', error)
@@ -1497,6 +1948,11 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
                     <h2 className="font-display text-3xl font-700 text-[#0D0D0D] mb-6">Datos de envío</h2>
                   </div>
 
+                  <label className="flex items-start gap-3 border border-[#DDD9D0] bg-white p-4 text-sm">
+                    <input type="checkbox" checked={rememberShipping} onChange={event => setRememberShipping(event.target.checked)} className="mt-1 accent-[#C9A96E]" />
+                    <span><span className="font-600">Guardar mis datos de envío</span><span className="block text-xs text-[#6B6860]">Se guardarán de forma privada en tu cuenta para próximas compras.</span></span>
+                  </label>
+
                   <div className="grid sm:grid-cols-2 gap-4">
                     {[
                       { id: 'sh-name', label: 'Nombre', key: 'name', placeholder: 'Ana', auto: 'given-name' },
@@ -1548,9 +2004,11 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
                     ))}
                   </div>
 
+                  {shippingError && <p role="alert" className="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{shippingError}</p>}
+
                   <div className="pt-2">
-                    <button type="submit" className="w-full bg-[#0D0D0D] text-white py-4 text-sm font-700 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
-                      Continuar al pago →
+                    <button type="submit" disabled={savingShipping || loadingShipping} className="w-full bg-[#0D0D0D] text-white py-4 text-sm font-700 tracking-wide uppercase hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50">
+                      {loadingShipping ? 'Cargando datos…' : savingShipping ? 'Guardando…' : 'Continuar al pago →'}
                     </button>
                   </div>
                 </form>
@@ -1769,14 +2227,32 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
         )}
 
         {step === 'confirm' && (
-          <ConfirmStep orderNum={orderNum} returnCode={returnCode} total={total} cart={cart} onSuccess={onSuccess} />
+          <ConfirmStep
+            orderNum={orderNum}
+            returnCode={returnCode}
+            total={total}
+            shipping={shipping}
+            cart={cart}
+            onDownloadReceipt={downloadReceipt}
+            receiptError={receiptError}
+            onSuccess={onSuccess}
+          />
         )}
       </div>
     </div>
   )
 }
 
-function ConfirmStep({ orderNum, returnCode, total, cart, onSuccess }: { orderNum: string; returnCode: string; total: number; cart: CartItem[]; onSuccess: () => void }) {
+function ConfirmStep({ orderNum, returnCode, total, shipping, cart, onDownloadReceipt, receiptError, onSuccess }: {
+  orderNum: string
+  returnCode: string
+  total: number
+  shipping: ShippingDetails
+  cart: CartItem[]
+  onDownloadReceipt: () => void
+  receiptError: string
+  onSuccess: () => void
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const checkRef = useRef<SVGCircleElement>(null)
 
@@ -1832,6 +2308,19 @@ function ConfirmStep({ orderNum, returnCode, total, cart, onSuccess }: { orderNu
         </div>
       </div>
 
+      <div className="bg-white border border-[#DDD9D0] p-5 text-left mb-6">
+        <h3 className="font-600 text-sm text-[#0D0D0D] mb-3">Datos de envío</h3>
+        <p className="text-sm text-[#0D0D0D]">{shipping.name} {shipping.lastname}</p>
+        <p className="text-xs text-[#6B6860]">{shipping.address}, {shipping.dept}, {shipping.city} {shipping.zip}</p>
+        <p className="text-xs text-[#6B6860]">{shipping.phone} · {shipping.email}</p>
+      </div>
+
+      <button type="button" onClick={onDownloadReceipt} className="w-full border border-[#0D0D0D] bg-white py-4 text-sm font-700 tracking-wide uppercase text-[#0D0D0D] hover:bg-[#F2EFE9] transition-colors mb-3">
+        Descargar boleta
+      </button>
+      <p className="text-xs text-[#6B6860] mb-4">En la ventana de impresión, selecciona «Guardar como PDF» para descargarla.</p>
+      {receiptError && <p role="alert" className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{receiptError}</p>}
+
       <div className="grid grid-cols-2 gap-3 mb-6">
         {[
           { icon: '📦', title: 'Preparando', desc: 'Tu pedido está siendo alistado' },
@@ -1868,6 +2357,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
   const [isLoading, setIsLoading] = useState(true)
   const [dbError, setDbError] = useState('')
   const [productEditorOpen, setProductEditorOpen] = useState(false)
+  const [isSavingProduct, setIsSavingProduct] = useState(false)
   const [measurementProduct, setMeasurementProduct] = useState<any | null>(null)
   const [editingProduct, setEditingProduct] = useState<any | null>(null)
   const [selectedClient, setSelectedClient] = useState<any | null>(null)
@@ -1881,10 +2371,10 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
     try {
       const [ordersResult, productsResult, categoriesResult, clientsResult, returnsResult] = await Promise.all([
         supabase.from('pedidos').select('id, numero_orden, monto_total, estado, creado_el, perfiles(nombre, apellido), pedido_productos(id, codigo_producto, producto_id, nombre_producto, talla, estado)').order('creado_el', { ascending: false }),
-        fetchProductsFromSupabase(),
+        fetchProductsFromSupabase(true),
         supabase.from('categorias').select('id, nombre').order('nombre'),
         supabase.from('perfiles').select('id, nombre, apellido, correo, creado_el, pedidos(id, numero_orden, codigo_devolucion, monto_total, estado, creado_el, pedido_productos(id, codigo_producto, nombre_producto, talla, estado))'),
-        supabase.from('devoluciones').select('id, codigo_devolucion, pedido_id, motivo, estado, creado_el, perfiles(nombre, apellido), variantes_producto(productos(nombre))').order('creado_el', { ascending: false }),
+        supabase.from('devoluciones').select('id, codigo_devolucion, codigo_cambio, pedido_id, pedido_producto_id, motivo, detalle_motivo, estado, creado_el, nombre_cliente, correo_cliente, telefono_cliente, imagen_path, boleta_path, perfiles(nombre, apellido), pedidos(numero_orden), pedido_productos(nombre_producto, talla, codigo_producto)').order('creado_el', { ascending: false }),
       ])
 
       const errors = [ordersResult.error, productsResult.error, categoriesResult.error, clientsResult.error, returnsResult.error].filter(Boolean)
@@ -1905,6 +2395,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
 
   function openProductEditor(product?: any) {
     setEditingProduct(product ?? null)
+    setDbError('')
     setProductImageFile(null)
     setProductForm(product ? {
       name: product.nombre,
@@ -1933,137 +2424,157 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
       setDbError('La imagen no puede superar los 5 MB.')
       return
     }
-    const payload: Record<string, string | number> = {
-      nombre: productForm.name.trim(),
-      precio_base: Number(productForm.price) * PRICE_STORAGE_SCALE,
-      stock,
-      etiqueta: productForm.tag.trim(),
-    }
-    if (!editingProduct) {
-      payload.slug = `${createSlug(productForm.name)}-${crypto.randomUUID().slice(0, 8)}`
-      payload.genero = 'unisex'
-    }
-    let uploadedImagePath = ''
-    if (productImageFile) {
-      const extension = productImageFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
-      uploadedImagePath = `${crypto.randomUUID()}.${extension}`
-      const { error } = await supabase.storage.from('productos').upload(uploadedImagePath, productImageFile, {
-        cacheControl: '3600',
-        contentType: productImageFile.type,
-        upsert: false,
-      })
-      if (error) {
-        setDbError(`No se pudo subir la imagen: ${error.message}. Verifica que ejecutaste la configuración de Storage en Supabase.`)
-        return
+    setIsSavingProduct(true)
+    try {
+      const payload: Record<string, string | number> = {
+        nombre: productForm.name.trim(),
+        precio_base: Number(productForm.price) * PRICE_STORAGE_SCALE,
+        stock,
+        etiqueta: productForm.tag.trim(),
       }
-      payload.imagen_url = supabase.storage.from('productos').getPublicUrl(uploadedImagePath).data.publicUrl
-    } else if (productForm.imageUrl.trim()) {
-      payload.imagen_url = productForm.imageUrl.trim()
-    }
-    let categoryId = productForm.categoryId
-    if (categoryId.startsWith('new:')) {
-      const categoryName = categoryId.slice(4)
-      const categorySlug = categoryName
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-      const { data: existingCategory, error: lookupError } = await supabase
-        .from('categorias')
-        .select('id')
-        .eq('slug', categorySlug)
-        .maybeSingle()
-      if (lookupError) {
-        if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
-        setDbError(`No se pudo buscar la categoría: ${lookupError.message}`)
-        return
+      if (!editingProduct) {
+        payload.slug = `${createSlug(productForm.name)}-${crypto.randomUUID().slice(0, 8)}`
+        payload.genero = 'unisex'
       }
-
-      if (existingCategory) {
-        categoryId = String(existingCategory.id)
-      } else {
-        const { data: category, error: insertError } = await supabase
-          .from('categorias')
-          .insert({
-            nombre: categoryName,
-            slug: categorySlug,
-            tipo_ranura: CATEGORY_SLOT_TYPES[categoryName],
-          })
-          .select('id')
-          .single()
-
-        if (insertError?.code === '23505') {
-          const { data: duplicateCategory, error: duplicateLookupError } = await supabase
-            .from('categorias')
-            .select('id')
-            .eq('slug', categorySlug)
-            .maybeSingle()
-          if (!duplicateLookupError && duplicateCategory) {
-            categoryId = String(duplicateCategory.id)
-          } else {
-            if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
-            setDbError(`La categoría ya existe, pero no se pudo recuperar: ${duplicateLookupError?.message ?? insertError.message}`)
-            return
-          }
-        } else if (insertError || !category) {
-          if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
-          setDbError(`No se pudo crear la categoría: ${insertError?.message ?? 'Respuesta vacía de Supabase.'}`)
+      let uploadedImagePath = ''
+      if (productImageFile) {
+        const extension = productImageFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
+        uploadedImagePath = `${crypto.randomUUID()}.${extension}`
+        const { error } = await supabase.storage.from('productos').upload(uploadedImagePath, productImageFile, {
+          cacheControl: '3600',
+          contentType: productImageFile.type,
+          upsert: false,
+        })
+        if (error) {
+          setDbError(`No se pudo subir la imagen: ${error.message}. Verifica que ejecutaste la configuración de Storage en Supabase.`)
           return
+        }
+        payload.imagen_url = supabase.storage.from('productos').getPublicUrl(uploadedImagePath).data.publicUrl
+      } else if (productForm.imageUrl.trim()) {
+        payload.imagen_url = productForm.imageUrl.trim()
+      }
+      let categoryId = String(productForm.categoryId ?? '')
+      if (categoryId.startsWith('new:')) {
+        const categoryName = categoryId.slice(4)
+        const categorySlug = categoryName
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '')
+        const { data: existingCategory, error: lookupError } = await supabase
+          .from('categorias')
+          .select('id')
+          .eq('slug', categorySlug)
+          .maybeSingle()
+        if (lookupError) {
+          if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+          setDbError(`No se pudo buscar la categoría: ${lookupError.message}`)
+          return
+        }
+
+        if (existingCategory) {
+          categoryId = String(existingCategory.id)
         } else {
-          categoryId = String(category.id)
+          const { data: category, error: insertError } = await supabase
+            .from('categorias')
+            .insert({
+              nombre: categoryName,
+              slug: categorySlug,
+              tipo_ranura: CATEGORY_SLOT_TYPES[categoryName],
+            })
+            .select('id')
+            .single()
+
+          if (insertError?.code === '23505') {
+            const { data: duplicateCategory, error: duplicateLookupError } = await supabase
+              .from('categorias')
+              .select('id')
+              .eq('slug', categorySlug)
+              .maybeSingle()
+            if (!duplicateLookupError && duplicateCategory) {
+              categoryId = String(duplicateCategory.id)
+            } else {
+              if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+              setDbError(`La categoría ya existe, pero no se pudo recuperar: ${duplicateLookupError?.message ?? insertError.message}`)
+              return
+            }
+          } else if (insertError || !category) {
+            if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+            setDbError(`No se pudo crear la categoría: ${insertError?.message ?? 'Respuesta vacía de Supabase.'}`)
+            return
+          } else {
+            categoryId = String(category.id)
+          }
         }
       }
-    }
-    if (categoryId) payload.categoria_id = categoryId
+      if (categoryId) payload.categoria_id = categoryId
 
-    let result = editingProduct
-      ? await supabase.from('productos').update(payload).eq('id', editingProduct.id).select('id').maybeSingle()
-      : await supabase.from('productos').insert(payload)
-
-    let imageWasSkipped = false
-    const missingImageColumn = result.error?.message.includes('imagen_url')
-      && (result.error.code === '42703' || result.error.code === 'PGRST204')
-    if (missingImageColumn && payload.imagen_url) {
-      if (productImageFile) {
-        await supabase.storage.from('productos').remove([uploadedImagePath])
-        await loadData()
-        if (categoryId) setProductForm(form => ({ ...form, categoryId }))
-        setDbError('La base no tiene la columna imagen_url. Ejecuta la actualización SQL de productos y vuelve a guardar la imagen.')
-        return
-      }
-      delete payload.imagen_url
-      result = editingProduct
+      let result = editingProduct
         ? await supabase.from('productos').update(payload).eq('id', editingProduct.id).select('id').maybeSingle()
         : await supabase.from('productos').insert(payload)
-      imageWasSkipped = !result.error
-    }
 
-    if (result.error) {
-      if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
-      setDbError(`No se pudo guardar el producto: ${result.error.message}`)
-      return
-    }
-    if (editingProduct && !result.data) {
-      setDbError('Supabase no actualizó el producto. Verifica que tu cuenta tenga rol admin y que el producto siga registrado; no se guardaron los cambios.')
-      return
-    }
+      let imageWasSkipped = false
+      const missingImageColumn = result.error?.message.includes('imagen_url')
+        && (result.error.code === '42703' || result.error.code === 'PGRST204')
+      if (missingImageColumn && payload.imagen_url) {
+        if (productImageFile) {
+          await supabase.storage.from('productos').remove([uploadedImagePath])
+          await loadData()
+          if (categoryId) setProductForm(form => ({ ...form, categoryId }))
+          setDbError('La base no tiene la columna imagen_url. Ejecuta la actualización SQL de productos y vuelve a guardar la imagen.')
+          return
+        }
+        delete payload.imagen_url
+        result = editingProduct
+          ? await supabase.from('productos').update(payload).eq('id', editingProduct.id).select('id').maybeSingle()
+          : await supabase.from('productos').insert(payload)
+        imageWasSkipped = !result.error
+      }
 
-    setProductEditorOpen(false)
-    await loadData()
-    await onProductsChanged()
-    if (imageWasSkipped) setDbError('Producto guardado. Para guardar su imagen, ejecuta la actualización SQL de Supabase.')
+      if (result.error) {
+        if (uploadedImagePath) await supabase.storage.from('productos').remove([uploadedImagePath])
+        setDbError(`No se pudo guardar el producto: ${result.error.message}`)
+        return
+      }
+      if (editingProduct && !result.data) {
+        setDbError('Supabase no actualizó el producto. Verifica que tu cuenta tenga rol admin y que el producto siga registrado; no se guardaron los cambios.')
+        return
+      }
+
+      setProductEditorOpen(false)
+      await loadData()
+      await onProductsChanged()
+      if (imageWasSkipped) setDbError('Producto guardado. Para guardar su imagen, ejecuta la actualización SQL de Supabase.')
+    } catch (error) {
+      setDbError(`No se pudo guardar el producto: ${error instanceof Error ? error.message : 'Error inesperado.'}`)
+    } finally {
+      setIsSavingProduct(false)
+    }
   }
 
-  async function deleteProduct(product: any) {
-    if (!window.confirm(`¿Eliminar ${product.nombre}?`)) return
-    const { error } = await supabase.from('productos').delete().eq('id', product.id)
+  async function setProductActive(product: any, active: boolean) {
+    if (!active && !window.confirm(`¿Retirar ${product.nombre} del catálogo? Se conservará en los pedidos anteriores.`)) return
+    setDbError('')
+    const { data, error } = await supabase
+      .from('productos')
+      .update({ activo: active })
+      .eq('id', product.id)
+      .select('id')
+      .maybeSingle()
     if (error) {
-      setDbError(`No se pudo eliminar el producto: ${error.message}`)
+      const needsMigration = error.message.includes('activo')
+        && (error.code === '42703' || error.code === 'PGRST204')
+      setDbError(needsMigration
+        ? 'No se pudo actualizar el producto porque falta la columna activo. Ejecuta actualizaciones_db.sql en Supabase y vuelve a intentarlo.'
+        : `No se pudo ${active ? 'restaurar' : 'retirar'} el producto: ${error.message}`)
       return
     }
-    await loadData()
-    await onProductsChanged()
+    if (!data) {
+      setDbError('Supabase no actualizó el producto. Verifica que tu cuenta tenga rol admin y que el producto siga registrado.')
+      return
+    }
+    await Promise.all([loadData(), onProductsChanged()])
   }
 
   async function updateOrderItemStatus(itemId: string, status: string) {
@@ -2148,7 +2659,8 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
     category: prod.categorias ? prod.categorias.nombre : 'Sin categoría',
     price: formatPrice(Number(prod.precio_base) / PRICE_STORAGE_SCALE),
     stock: Number(prod.stock ?? 0),
-    tag: prod.etiqueta || 'Base',
+    tag: prod.activo === false ? 'Archivado' : prod.etiqueta || 'Base',
+    archived: prod.activo === false,
     actions: 'Ver'
   }))
 
@@ -2179,21 +2691,26 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
   const returnRows: ReturnRow[] = dbReturns.map(ret => ({
     id: ret.id,
     code: ret.codigo_devolucion,
-    order: ret.pedido_id ? ret.pedido_id.substring(0, 8) : '',
-    client: ret.perfiles ? `${ret.perfiles.nombre || ''} ${ret.perfiles.apellido || ''}`.trim() : 'Desconocido',
-    product: ret.variantes_producto?.productos?.nombre || 'Producto desconocido',
+    order: ret.pedidos?.numero_orden || (ret.pedido_id ? ret.pedido_id.substring(0, 8) : ''),
+    client: ret.nombre_cliente || (ret.perfiles ? `${ret.perfiles.nombre || ''} ${ret.perfiles.apellido || ''}`.trim() : 'Desconocido'),
     reason: ret.motivo,
     date: new Date(ret.creado_el).toLocaleDateString('es-PE'),
     status: ret.estado ? ret.estado.charAt(0).toUpperCase() + ret.estado.slice(1) : 'Desconocido',
     action: ret.estado === 'pendiente' || ret.estado === 'en revisión' ? 'Resolver' : 'Resuelta',
-    email: '',
-    phone: '',
+    email: ret.correo_cliente || '',
+    phone: ret.telefono_cliente || '',
     address: '',
-    details: '',
-    productImage: '',
+    product: ret.pedido_productos
+      ? `${ret.pedido_productos.nombre_producto} · Talla ${ret.pedido_productos.talla} · ${ret.pedido_productos.codigo_producto}`
+      : 'Producto desconocido',
+    details: ret.detalle_motivo || '',
+    changeCode: ret.codigo_cambio || '',
+    imagePath: ret.imagen_path || '',
+    receiptPath: ret.boleta_path || '',
   }))
 
   const [selectedReturnCode, setSelectedReturnCode] = useState(returnRows[0]?.code ?? '')
+  const [returnAttachments, setReturnAttachments] = useState({ image: '', receipt: '' })
   const selectedReturn = returnRows.find(row => row.code === selectedReturnCode) ?? returnRows[0] ?? {
     code: '',
     order: '',
@@ -2209,6 +2726,33 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
     details: '',
     productImage: 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&h=1000&fit=crop&auto=format'
   }
+
+  useEffect(() => {
+    let active = true
+    async function loadReturnAttachments() {
+      setReturnAttachments({ image: '', receipt: '' })
+      if (!selectedReturn.imagePath && !selectedReturn.receiptPath) return
+
+      const storage = supabase.storage.from('solicitudes-devolucion')
+      const [imageResult, receiptResult] = await Promise.all([
+        selectedReturn.imagePath ? storage.createSignedUrl(selectedReturn.imagePath, 3600) : Promise.resolve({ data: null, error: null }),
+        selectedReturn.receiptPath ? storage.createSignedUrl(selectedReturn.receiptPath, 3600) : Promise.resolve({ data: null, error: null }),
+      ])
+      if (!active) return
+      const attachmentErrors = [imageResult.error, receiptResult.error].filter(Boolean)
+      if (attachmentErrors.length) {
+        console.error('Error cargando los archivos adjuntos de devolución:', attachmentErrors)
+        setDbError(`No se pudieron cargar los archivos adjuntos: ${attachmentErrors.map(error => error?.message).join(' ')}`)
+      }
+      setReturnAttachments({
+        image: imageResult.data?.signedUrl ?? '',
+        receipt: receiptResult.data?.signedUrl ?? '',
+      })
+    }
+
+    void loadReturnAttachments()
+    return () => { active = false }
+  }, [selectedReturn.imagePath, selectedReturn.receiptPath])
 
   const sales = Array.from({ length: 12 }, () => 0)
   dbOrders.forEach(order => {
@@ -2347,9 +2891,13 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
                 <td className="px-4 py-3"><span className="inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full bg-[#F2EFE9] text-[#0D0D0D]">{row.tag}</span></td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
-                    <button onClick={() => openProductEditor(dbProducts.find(product => product.id === row.id))} className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">Editar</button>
-                    <button onClick={() => setMeasurementProduct(dbProducts.find(product => product.id === row.id))} className="text-xs font-600 text-[#0D0D0D] hover:text-[#C9A96E]">Tallas y medidas</button>
-                    <button onClick={() => void deleteProduct(dbProducts.find(product => product.id === row.id))} className="text-xs font-600 text-red-700 hover:text-red-900">Eliminar</button>
+                    <button onClick={() => openProductEditor(dbProducts.find(product => product.id === row.id))} className="inline-flex items-center rounded-md border border-[#DDD9D0] bg-white px-2.5 py-1.5 text-xs font-600 text-[#0D0D0D] transition-colors hover:border-[#C9A96E] hover:bg-[#F5F1ED] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C9A96E]">Editar</button>
+                    <button onClick={() => setMeasurementProduct(dbProducts.find(product => product.id === row.id))} className="inline-flex items-center rounded-md border border-[#DDD9D0] bg-white px-2.5 py-1.5 text-xs font-600 text-[#0D0D0D] transition-colors hover:border-[#C9A96E] hover:bg-[#F5F1ED] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C9A96E]">Tallas y medidas</button>
+                    {row.archived ? (
+                      <button onClick={() => void setProductActive(dbProducts.find(product => product.id === row.id), true)} className="inline-flex items-center rounded-md border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-600 text-emerald-800 transition-colors hover:border-emerald-400 hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">Restaurar</button>
+                    ) : (
+                      <button onClick={() => void setProductActive(dbProducts.find(product => product.id === row.id), false)} className="inline-flex items-center rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-600 text-red-700 transition-colors hover:border-red-400 hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600">Eliminar</button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -2415,8 +2963,8 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
           <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Servicio</p>
           <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Devoluciones</h1>
         </div>
-        <button className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
-          Nueva solicitud
+        <button onClick={() => void loadData()} disabled={isLoading} className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors disabled:opacity-50">
+          {isLoading ? 'Actualizando…' : 'Actualizar'}
         </button>
       </div>
 
@@ -2499,6 +3047,10 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
                 <p className="font-600">{selectedReturn.order}</p>
               </div>
               <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Código de cambio</p>
+                <p className="font-600">{selectedReturn.changeCode || 'No registrado'}</p>
+              </div>
+              <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Correo</p>
                 <p>{selectedReturn.email ?? ''}</p>
               </div>
@@ -2509,17 +3061,12 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
             </div>
 
             <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Dirección</p>
-              <p>{selectedReturn.address ?? ''}</p>
-            </div>
-
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Producto</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Artículo solicitado</p>
               <p className="font-600">{selectedReturn.product}</p>
             </div>
 
             <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Motivo de devolución</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-1">Motivo de cambio o devolución</p>
               <p className="font-600">{selectedReturn.reason}</p>
             </div>
 
@@ -2530,13 +3077,15 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
           </div>
 
           <div className="rounded-lg border border-[#DDD9D0] bg-white p-3">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-2">Imagen adjunta</p>
-            <img
-              src={selectedReturn.productImage ?? 'https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=800&h=1000&fit=crop&auto=format'}
-              alt={`Producto de la devolución ${selectedReturn.product}`}
-              className="w-full h-72 object-cover rounded-md border border-[#E6E1D8]"
-            />
-            <p className="text-xs text-[#6B6860] mt-3">Evidencia enviada por el cliente con su información y la foto del producto.</p>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[#6B6860] mb-2">Archivos enviados por el cliente</p>
+            {returnAttachments.image ? (
+              <a href={returnAttachments.image} target="_blank" rel="noreferrer" className="block">
+                <img src={returnAttachments.image} alt={`Imagen adjunta del artículo ${selectedReturn.product}`} className="w-full max-h-72 object-contain rounded-md border border-[#E6E1D8]" />
+              </a>
+            ) : <p className="py-5 text-sm text-[#6B6860]">No hay imagen adjunta disponible.</p>}
+            {returnAttachments.receipt ? (
+              <a href={returnAttachments.receipt} target="_blank" rel="noreferrer" className="mt-4 inline-flex text-sm font-600 text-[#0D0D0D] underline">Abrir boleta adjunta</a>
+            ) : <p className="mt-3 text-xs text-[#6B6860]">No hay boleta adjunta disponible.</p>}
           </div>
         </div>
       </div>
@@ -2721,7 +3270,12 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
 
       {productEditorOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setProductEditorOpen(false) }}>
-          <form onSubmit={saveProduct} className="w-full max-w-lg space-y-4 bg-white p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="product-editor-title">
+          <form onSubmit={saveProduct} onInvalid={event => {
+            const field = event.target
+            if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement) {
+              setDbError(field.validationMessage)
+            }
+          }} className="w-full max-w-lg space-y-4 bg-white p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="product-editor-title">
             <div className="flex items-center justify-between">
               <h2 id="product-editor-title" className="font-display text-2xl text-[#0D0D0D]">{editingProduct ? 'Editar producto' : 'Nuevo producto'}</h2>
               <button type="button" onClick={() => setProductEditorOpen(false)} aria-label="Cerrar" className="px-2 py-1 text-lg">×</button>
@@ -2755,9 +3309,10 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
             <label className="block text-xs font-600 uppercase text-[#6B6860]">O usa una URL de imagen
               <input type="url" value={productForm.imageUrl} onChange={event => setProductForm(form => ({ ...form, imageUrl: event.target.value }))} placeholder="https://..." className="mt-1 w-full border border-[#DDD9D0] px-3 py-2 text-sm normal-case" />
             </label>
+            {dbError && <p role="alert" className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{dbError}</p>}
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setProductEditorOpen(false)} className="border border-[#DDD9D0] px-4 py-2 text-xs font-600 uppercase">Cancelar</button>
-              <button type="submit" className="bg-[#0D0D0D] px-4 py-2 text-xs font-600 uppercase text-white hover:bg-[#C9A96E] hover:text-[#0D0D0D]">Guardar producto</button>
+              <button type="submit" disabled={isSavingProduct} className="bg-[#0D0D0D] px-4 py-2 text-xs font-600 uppercase text-white hover:bg-[#C9A96E] hover:text-[#0D0D0D] disabled:cursor-wait disabled:opacity-60">{isSavingProduct ? 'Guardando…' : 'Guardar producto'}</button>
             </div>
           </form>
         </div>
@@ -2889,7 +3444,7 @@ export default function App() {
   }, [])
 
   const navigatePage = useCallback((nextPage: Page) => {
-    const protectedPage = nextPage === 'avatar' || nextPage === 'tryon' || nextPage === 'checkout'
+    const protectedPage = nextPage === 'avatar' || nextPage === 'tryon' || nextPage === 'checkout' || nextPage === 'returns'
     if (protectedPage && !session && !getSessionInfo()) {
       setPendingPage(nextPage)
       setPage('login')
@@ -2976,6 +3531,7 @@ export default function App() {
         {page === 'login' && <LoginPage setPage={setPage} returnPage={pendingPage} onAuthenticated={clearPendingPage} />}
         {page === 'register' && <RegisterPage setPage={setPage} returnPage={pendingPage} onAuthenticated={clearPendingPage} />}
         {page === 'account' && <AccountPage session={session} setPage={navigatePage} onLogout={handleLogout} />}
+        {page === 'returns' && <ReturnRequestPage setPage={navigatePage} />}
         {page === 'forgot-password' && <ForgotPasswordPage setPage={setPage} />}
         {(page === 'avatar' || page === 'tryon') && <Suspense fallback={<div className="min-h-screen bg-[#FAF8F5] pt-28 text-center text-[#6B6860]">Cargando probador 3D…</div>}>
           <FittingExperience mode={page === 'avatar' ? 'profile' : 'tryon'} products={products} setPage={navigatePage} initialProductId={tryOnProductId} onProductChange={setTryOnProductId} />
