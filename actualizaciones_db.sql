@@ -2,6 +2,7 @@
 ALTER TABLE public.productos ADD COLUMN IF NOT EXISTS etiqueta text;
 ALTER TABLE public.productos ADD COLUMN IF NOT EXISTS imagen_url text;
 ALTER TABLE public.productos ADD COLUMN IF NOT EXISTS stock integer NOT NULL DEFAULT 0 CHECK (stock >= 0);
+ALTER TABLE public.productos ADD COLUMN IF NOT EXISTS activo boolean NOT NULL DEFAULT true;
 
 -- 2. Crear la tabla de devoluciones
 CREATE TABLE IF NOT EXISTS public.devoluciones (
@@ -253,15 +254,15 @@ BEGIN
       RAISE EXCEPTION 'Un producto del pedido contiene datos no válidos.';
     END IF;
 
-    SELECT nombre, precio_base
+    SELECT nombre, precio_base, activo
     INTO catalogo
     FROM public.productos
     WHERE id::text = producto.producto_id;
 
-    IF NOT FOUND OR catalogo.nombre <> producto.nombre_producto
+    IF NOT FOUND OR NOT catalogo.activo OR catalogo.nombre <> producto.nombre_producto
       OR catalogo.precio_base <> producto.precio_unitario
     THEN
-      RAISE EXCEPTION 'El producto o su precio ya no coincide con el catálogo.';
+      RAISE EXCEPTION 'El producto ya no está disponible o su precio ya no coincide con el catálogo.';
     END IF;
 
     subtotal := subtotal + producto.cantidad * producto.precio_unitario;
@@ -288,6 +289,7 @@ BEGIN
     UPDATE public.productos
     SET stock = stock - producto.cantidad
     WHERE id::text = producto.producto_id
+      AND activo = true
       AND stock >= producto.cantidad;
 
     IF NOT FOUND THEN
@@ -459,5 +461,301 @@ REVOKE ALL ON FUNCTION public.gestionar_devolucion(uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.gestionar_devolucion(uuid, text) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
+
+NOTIFY pgrst, 'reload schema';
+
+-- Direcciones de envío que cada cliente puede reutilizar en sus próximas compras.
+CREATE TABLE IF NOT EXISTS public.direcciones_envio (
+  usuario_id uuid PRIMARY KEY REFERENCES public.perfiles(id) ON DELETE CASCADE,
+  nombre text NOT NULL,
+  apellido text NOT NULL,
+  correo text NOT NULL,
+  telefono text NOT NULL,
+  direccion text NOT NULL,
+  ciudad text NOT NULL,
+  distrito text NOT NULL,
+  codigo_postal text NOT NULL,
+  actualizado_el timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.direcciones_envio ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Clientes leen su dirección de envío" ON public.direcciones_envio;
+CREATE POLICY "Clientes leen su dirección de envío" ON public.direcciones_envio
+  FOR SELECT TO authenticated
+  USING (usuario_id = auth.uid());
+
+DROP POLICY IF EXISTS "Clientes guardan su dirección de envío" ON public.direcciones_envio;
+CREATE POLICY "Clientes guardan su dirección de envío" ON public.direcciones_envio
+  FOR INSERT TO authenticated
+  WITH CHECK (usuario_id = auth.uid());
+
+DROP POLICY IF EXISTS "Clientes actualizan su dirección de envío" ON public.direcciones_envio;
+CREATE POLICY "Clientes actualizan su dirección de envío" ON public.direcciones_envio
+  FOR UPDATE TO authenticated
+  USING (usuario_id = auth.uid())
+  WITH CHECK (usuario_id = auth.uid());
+
+GRANT SELECT, INSERT, UPDATE ON public.direcciones_envio TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+-- Solicitudes de cambio/devolución enviadas por clientes desde su cuenta.
+ALTER TABLE public.devoluciones
+  ALTER COLUMN variante_producto_id DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS pedido_producto_id uuid REFERENCES public.pedido_productos(id),
+  ADD COLUMN IF NOT EXISTS codigo_cambio text,
+  ADD COLUMN IF NOT EXISTS nombre_cliente text,
+  ADD COLUMN IF NOT EXISTS correo_cliente text,
+  ADD COLUMN IF NOT EXISTS telefono_cliente text,
+  ADD COLUMN IF NOT EXISTS detalle_motivo text,
+  ADD COLUMN IF NOT EXISTS imagen_path text,
+  ADD COLUMN IF NOT EXISTS boleta_path text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS devoluciones_articulo_pendiente_unique
+  ON public.devoluciones (pedido_producto_id)
+  WHERE pedido_producto_id IS NOT NULL
+    AND estado IN ('pendiente', 'en revisión');
+
+DROP POLICY IF EXISTS "Permitir lectura de devoluciones a todos" ON public.devoluciones;
+DROP POLICY IF EXISTS "Clientes leen sus solicitudes de devolución" ON public.devoluciones;
+CREATE POLICY "Clientes leen sus solicitudes de devolución" ON public.devoluciones
+  FOR SELECT TO authenticated
+  USING (usuario_id = auth.uid() OR public.is_admin());
+
+REVOKE INSERT, UPDATE, DELETE ON public.devoluciones FROM anon, authenticated;
+GRANT SELECT ON public.devoluciones TO authenticated;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'solicitudes-devolucion',
+  'solicitudes-devolucion',
+  false,
+  5242880,
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+)
+ON CONFLICT (id) DO UPDATE
+SET public = false,
+    file_size_limit = EXCLUDED.file_size_limit,
+    allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS "Clientes adjuntan archivos de devolución" ON storage.objects;
+CREATE POLICY "Clientes adjuntan archivos de devolución" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'solicitudes-devolucion'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "Clientes y admins leen archivos de devolución" ON storage.objects;
+CREATE POLICY "Clientes y admins leen archivos de devolución" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'solicitudes-devolucion'
+    AND (
+      (storage.foldername(name))[1] = auth.uid()::text
+      OR public.is_admin()
+    )
+  );
+
+DROP POLICY IF EXISTS "Clientes eliminan sus archivos de devolución" ON storage.objects;
+CREATE POLICY "Clientes eliminan sus archivos de devolución" ON storage.objects
+  FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'solicitudes-devolucion'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+CREATE OR REPLACE FUNCTION public.crear_solicitud_devolucion(
+  p_numero_orden text,
+  p_codigo_cambio text,
+  p_pedido_producto_id uuid,
+  p_nombre_cliente text,
+  p_correo_cliente text,
+  p_telefono_cliente text,
+  p_motivo text,
+  p_detalle_motivo text,
+  p_imagen_path text,
+  p_boleta_path text
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  pedido_id_validado uuid;
+  nueva_solicitud_id uuid;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Inicia sesión para enviar una solicitud.';
+  END IF;
+
+  IF coalesce(btrim(p_numero_orden), '') = ''
+    OR coalesce(btrim(p_codigo_cambio), '') = ''
+    OR p_pedido_producto_id IS NULL
+    OR coalesce(btrim(p_nombre_cliente), '') = ''
+    OR coalesce(btrim(p_correo_cliente), '') = ''
+    OR coalesce(btrim(p_telefono_cliente), '') = ''
+    OR coalesce(p_motivo, '') NOT IN (
+      'Talla incorrecta',
+      'Defecto de fábrica',
+      'No era lo que esperaba',
+      'Producto equivocado recibido',
+      'Otro'
+    )
+    OR (p_motivo = 'Otro' AND coalesce(btrim(p_detalle_motivo), '') = '')
+  THEN
+    RAISE EXCEPTION 'Completa todos los campos requeridos de la solicitud.';
+  END IF;
+
+  SELECT id
+  INTO pedido_id_validado
+  FROM public.pedidos
+  WHERE numero_orden = btrim(p_numero_orden)
+    AND usuario_id = auth.uid()
+    AND upper(coalesce(codigo_devolucion, '')) = upper(btrim(p_codigo_cambio));
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'El número de orden o código de cambio no corresponde a tu cuenta.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.pedido_productos
+    WHERE id = p_pedido_producto_id
+      AND pedido_id = pedido_id_validado
+      AND stock_descontado = true
+      AND estado <> 'cancelado'
+  ) THEN
+    RAISE EXCEPTION 'El artículo seleccionado no pertenece a la orden o no está disponible para cambio.';
+  END IF;
+
+  IF coalesce(p_imagen_path, '') NOT LIKE auth.uid()::text || '/%'
+    OR coalesce(p_boleta_path, '') NOT LIKE auth.uid()::text || '/%'
+    OR NOT EXISTS (
+      SELECT 1 FROM storage.objects
+      WHERE bucket_id = 'solicitudes-devolucion' AND name = p_imagen_path
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM storage.objects
+      WHERE bucket_id = 'solicitudes-devolucion' AND name = p_boleta_path
+    )
+  THEN
+    RAISE EXCEPTION 'Adjunta la imagen del producto y la boleta antes de enviar la solicitud.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.devoluciones
+    WHERE pedido_producto_id = p_pedido_producto_id
+      AND estado IN ('pendiente', 'en revisión')
+  ) THEN
+    RAISE EXCEPTION 'Ya existe una solicitud pendiente para este artículo.';
+  END IF;
+
+  INSERT INTO public.devoluciones (
+    pedido_id,
+    usuario_id,
+    pedido_producto_id,
+    codigo_devolucion,
+    codigo_cambio,
+    nombre_cliente,
+    correo_cliente,
+    telefono_cliente,
+    motivo,
+    detalle_motivo,
+    imagen_path,
+    boleta_path,
+    estado
+  )
+  VALUES (
+    pedido_id_validado,
+    auth.uid(),
+    p_pedido_producto_id,
+    'DEV-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+    upper(btrim(p_codigo_cambio)),
+    btrim(p_nombre_cliente),
+    lower(btrim(p_correo_cliente)),
+    btrim(p_telefono_cliente),
+    p_motivo,
+    nullif(btrim(p_detalle_motivo), ''),
+    p_imagen_path,
+    p_boleta_path,
+    'pendiente'
+  )
+  RETURNING id INTO nueva_solicitud_id;
+
+  RETURN nueva_solicitud_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.crear_solicitud_devolucion(text, text, uuid, text, text, text, text, text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.crear_solicitud_devolucion(text, text, uuid, text, text, text, text, text, text, text) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.gestionar_devolucion(
+  p_devolucion_id uuid,
+  p_estado text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  devolucion public.devoluciones%ROWTYPE;
+  producto_id_text text;
+BEGIN
+  IF NOT public.is_admin() THEN
+    RAISE EXCEPTION 'Solo un administrador puede gestionar devoluciones.';
+  END IF;
+  IF p_estado NOT IN ('aprobado', 'rechazado') THEN
+    RAISE EXCEPTION 'El estado de devolución no es válido.';
+  END IF;
+
+  SELECT *
+  INTO devolucion
+  FROM public.devoluciones
+  WHERE id = p_devolucion_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'No se encontró la devolución.';
+  END IF;
+  IF devolucion.estado NOT IN ('pendiente', 'en revisión') THEN
+    RAISE EXCEPTION 'La devolución ya fue resuelta.';
+  END IF;
+
+  IF p_estado = 'aprobado' THEN
+    IF devolucion.pedido_producto_id IS NOT NULL THEN
+      SELECT producto_id
+      INTO producto_id_text
+      FROM public.pedido_productos
+      WHERE id = devolucion.pedido_producto_id;
+    ELSE
+      SELECT variante.producto_id::text
+      INTO producto_id_text
+      FROM public.variantes_producto AS variante
+      WHERE variante.id = devolucion.variante_producto_id;
+    END IF;
+
+    IF producto_id_text IS NULL THEN
+      RAISE EXCEPTION 'No se encontró el producto asociado a la devolución.';
+    END IF;
+
+    UPDATE public.productos
+    SET stock = stock + 1
+    WHERE id::text = producto_id_text;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'No se pudo reponer el stock del producto devuelto.';
+    END IF;
+  END IF;
+
+  UPDATE public.devoluciones
+  SET estado = p_estado
+  WHERE id = p_devolucion_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.gestionar_devolucion(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.gestionar_devolucion(uuid, text) TO authenticated;
 
 NOTIFY pgrst, 'reload schema';
