@@ -7,6 +7,7 @@ import ts from 'typescript'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { buildAdminOrderRows } from '../src/lib/adminOrders.ts'
+import * as garmentModel from '../src/lib/garmentModel.ts'
 
 function loadComponent(file, mocks = {}) {
   const filename = resolve(file)
@@ -44,6 +45,7 @@ const Fitting = loadComponent('src/components/FittingExperience.tsx', {
   '../lib/supabase': { supabase: {} },
   '../lib/fitting': { readSavedBody: () => body, assessFit: () => null, isReferenceMeasurements: () => false },
   '../lib/clad': { useCladAvatar: () => avatar },
+  '../lib/garmentModel': garmentModel,
   './FittingAvatar3D': { default: ({ bodyModelUrl }) => React.createElement('div', { 'data-avatar': bodyModelUrl }) },
   './CladAvatarControls': { default: () => null }, './AvatarAccuracyReport': { default: () => null },
 })
@@ -56,7 +58,7 @@ assert.ok(fittingHtml.includes('data-avatar="https://private.test/avatar.glb"'))
 assert.ok(fittingHtml.includes('aria-label="Prenda seleccionada"'))
 assert.ok(fittingHtml.includes('<h2 class="font-display text-xl">Prenda elegida</h2>'))
 assert.ok(fittingHtml.includes('aria-pressed="true"'))
-assert.ok(fittingHtml.includes('Representación 3D aproximada basada en las medidas registradas.'))
+assert.ok(fittingHtml.includes('Sin tallas registradas'))
 const profileHtml = renderToStaticMarkup(React.createElement(Fitting, { mode: 'profile', products, setPage: () => {} }))
 assert.ok(profileHtml.includes('Prueba una prenda'))
 assert.ok(profileHtml.includes('Selecciona una prenda para tu avatar'))

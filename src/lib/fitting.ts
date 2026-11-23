@@ -26,7 +26,6 @@ export interface FittingVariant {
   colorHex: string
   price: number
   measurements: GarmentMeasurements | null
-  modelUrl: string | null
 }
 
 export function isReferenceMeasurements(name: string, category: string, size: string, garment: GarmentMeasurements): boolean {
