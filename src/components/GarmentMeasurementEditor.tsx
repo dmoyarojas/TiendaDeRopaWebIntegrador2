@@ -17,7 +17,11 @@ const measureFields: { key: FieldKey; label: string }[] = [
   { key: 'largo_total_cm', label: 'Largo total' }, { key: 'porcentaje_elasticidad', label: 'Elasticidad (%)' },
 ]
 
-export default function GarmentMeasurementEditor({ product, onClose }: { product: Product; onClose: () => void }) {
+export default function GarmentMeasurementEditor({ product, onClose, onSaved }: {
+  product: Product
+  onClose: () => void
+  onSaved?: () => Promise<void>
+}) {
   const [variants, setVariants] = useState<VariantRow[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [form, setForm] = useState<Form>({ ...emptyForm, precio: String(Number(product.precio_base) / 1000) })
@@ -98,6 +102,7 @@ export default function GarmentMeasurementEditor({ product, onClose }: { product
       setSelectedId(variantId)
       setNotice('Talla y medidas guardadas. Ya se pueden usar en el probador.')
       await load()
+      await onSaved?.()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'No se pudieron guardar las medidas. Revisa los permisos de Supabase.')
     } finally {

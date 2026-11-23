@@ -2,11 +2,33 @@ import { Component, Suspense, useMemo, type ReactNode } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Bounds, Html, OrbitControls, useGLTF } from '@react-three/drei'
 import { prepareCladScene } from '../lib/cladModel'
+import { createGarmentGeometries } from '../lib/garmentModel'
+import type { BodyMeasurements, GarmentMeasurements } from '../lib/fitting'
+import { garmentKind } from '../lib/fitting'
+import { DoubleSide } from 'three'
 
 function CladBody({ url }: { url: string }) {
   const { scene } = useGLTF(url)
   const model = useMemo(() => prepareCladScene(scene), [scene])
   return <primitive object={model} />
+}
+
+function GarmentOverlay({ body, measurements, category, colorHex }: {
+  body: BodyMeasurements
+  measurements: GarmentMeasurements
+  category: string
+  colorHex: string
+}) {
+  const geometries = useMemo(
+    () => createGarmentGeometries(body, measurements, garmentKind(category)),
+    [body, measurements, category],
+  )
+  const color = /^#[\da-f]{6}$/i.test(colorHex) ? colorHex : '#C9A96E'
+  return <group>
+    {geometries.map((geometry, index) => <mesh key={index} geometry={geometry} renderOrder={1}>
+      <meshStandardMaterial color={color} roughness={0.88} side={DoubleSide} />
+    </mesh>)}
+  </group>
 }
 
 class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -19,10 +41,12 @@ class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean
   }
 }
 
-export default function FittingAvatar3D({ bodyModelUrl, busy = false, needsReview = false }: {
+export default function FittingAvatar3D({ bodyModelUrl, busy = false, needsReview = false, body, garment }: {
   bodyModelUrl?: string | null
   busy?: boolean
   needsReview?: boolean
+  body?: BodyMeasurements | null
+  garment?: { measurements: GarmentMeasurements | null; category: string; colorHex: string } | null
 }) {
   return <div className="relative h-[480px] w-full bg-[#eee9e1]" aria-label="Visor del avatar corporal Clad">
     {!bodyModelUrl ? <div role="status" className="flex h-full items-center justify-center px-8 text-center text-sm text-[#6B6860]">
@@ -36,7 +60,10 @@ export default function FittingAvatar3D({ bodyModelUrl, busy = false, needsRevie
         <directionalLight position={[-3, 2, -2]} intensity={0.7} />
         <OrbitControls makeDefault target={[0, 0.9, 0]} enablePan={false} minDistance={0.8} maxDistance={6} maxPolarAngle={Math.PI / 1.8} />
         <ModelBoundary key={bodyModelUrl}><Suspense fallback={<Html center><p role="status" className="w-52 text-center text-sm">Descargando el modelo 3D…</p></Html>}>
-          <Bounds fit clip observe margin={1.25}><CladBody url={bodyModelUrl} /></Bounds>
+          <Bounds fit clip observe margin={1.25}>
+            <CladBody url={bodyModelUrl} />
+            {body && garment?.measurements && <GarmentOverlay body={body} measurements={garment.measurements} category={garment.category} colorHex={garment.colorHex} />}
+          </Bounds>
         </Suspense></ModelBoundary>
       </Canvas>
     </>}
