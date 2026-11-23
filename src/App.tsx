@@ -479,7 +479,7 @@ function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; 
             La moda que<br /><em className="italic text-[#C9A96E]">te define</em>
           </h1>
           <p className="text-white/70 text-base sm:text-lg max-w-md mb-10 font-300 leading-relaxed">
-            Prendas diseñadas para quienes saben lo que quieren. Calidad premium, ajuste perfecto con tu avatar virtual.
+            Prendas diseñadas para quienes saben lo que quieren. Calidad premium y recomendaciones de talla basadas en tus medidas.
           </p>
           <div className="flex flex-wrap gap-3">
             <button
@@ -511,7 +511,7 @@ function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; 
                 En VELOUR creemos que la ropa es una extensión de quien eres. Fundada en 2018, nuestra marca nació con una misión clara: hacer que cada prenda se sienta hecha para ti.
               </p>
               <p className="text-[#6B6860] text-base leading-relaxed mb-8">
-                Con nuestra tecnología de <strong className="text-[#0D0D0D] font-600">avatar biométrico</strong>, puedes visualizar exactamente cómo lucirá cada prenda antes de comprar. Cero sorpresas, solo moda perfecta.
+                Con nuestro <strong className="text-[#0D0D0D] font-600">avatar personalizado</strong>, puedes consultar una representación 3D orientativa de cada prenda y comparar su ajuste según tus medidas.
               </p>
               <button
                 onClick={() => setPage('avatar')}
@@ -535,8 +535,8 @@ function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; 
           {/* Value props */}
           <div className="grid sm:grid-cols-3 gap-6">
             {[
-              { icon: '◈', title: 'Avatar Personalizado', desc: 'Ingresa tus medidas y visualiza las prendas sobre tu figura exacta antes de comprar.' },
-              { icon: '◉', title: 'Ajuste Garantizado', desc: 'Nuestro sistema de tallas inteligente te recomienda el fit perfecto según tu cuerpo.' },
+              { icon: '◈', title: 'Avatar Personalizado', desc: 'Ingresa tus medidas y consulta una vista 3D orientativa de las prendas junto con su ajuste estimado.' },
+              { icon: '◉', title: 'Ajuste estimado', desc: 'Nuestro sistema compara las medidas de cada talla con tus contornos y te orienta al elegir.' },
               { icon: '◎', title: 'Calidad Premium', desc: 'Materiales de primera selección en cada prenda. Sostenibles y duraderos.' },
             ].map(f => (
               <div key={f.title} className="feature-card border border-[#DDD9D0] p-7 hover:border-[#C9A96E] hover:shadow-sm transition-all group">
@@ -579,7 +579,7 @@ function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; 
           Pruébate la ropa<br />antes de comprar
         </h2>
         <p className="text-white/60 text-base max-w-md mx-auto mb-10 font-300">
-          Crea tu avatar con tus medidas exactas y visualiza cómo te queda cada prenda en segundos.
+          Crea tu avatar con tus medidas y consulta una representación 3D orientativa de cada prenda.
         </p>
         <div className="flex flex-wrap gap-3 justify-center">
           <button onClick={() => setPage('register')} className="bg-[#C9A96E] text-[#0D0D0D] px-8 py-3.5 text-sm font-600 tracking-wide uppercase hover:bg-[#b8955c] transition-colors">
@@ -2354,6 +2354,9 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
   const [dbCategories, setDbCategories] = useState<any[]>([])
   const [dbClients, setDbClients] = useState<any[]>([])
   const [dbReturns, setDbReturns] = useState<any[]>([])
+  const [productVariantSummary, setProductVariantSummary] = useState<Record<string, { size: string; color: string; measurements: string[] }[]>>({})
+  const [loadingProductVariants, setLoadingProductVariants] = useState(false)
+  const [productVariantError, setProductVariantError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [dbError, setDbError] = useState('')
   const [productEditorOpen, setProductEditorOpen] = useState(false)
@@ -2364,6 +2367,55 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
   const [copiedClientEmail, setCopiedClientEmail] = useState(false)
   const [productForm, setProductForm] = useState({ name: '', price: '', stock: '0', categoryId: '', tag: '', imageUrl: '' })
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
+
+  async function loadProductVariantSummary(products: any[] = dbProducts) {
+    setLoadingProductVariants(true)
+    setProductVariantError('')
+    if (!products.length) {
+      setProductVariantSummary({})
+      setLoadingProductVariants(false)
+      return
+    }
+
+    try {
+      const { data: variants, error: variantsError } = await supabase.from('variantes_producto')
+        .select('id, producto_id, talla, nombre_color')
+        .eq('esta_activo', true)
+        .in('producto_id', products.map(product => product.id))
+      if (variantsError) throw variantsError
+      if (!variants?.length) {
+        setProductVariantSummary({})
+        return
+      }
+
+      const { data: specifications, error: specificationsError } = await supabase.from('especificaciones_prenda')
+        .select('variante_producto_id, ancho_pecho_cm, ancho_cintura_cm, ancho_cadera_cm, ancho_hombros_cm, largo_total_cm')
+        .in('variante_producto_id', variants.map(variant => variant.id))
+      if (specificationsError) throw specificationsError
+
+      const specsByVariant = new Map((specifications ?? []).map(spec => [spec.variante_producto_id, spec]))
+      const summary: Record<string, { size: string; color: string; measurements: string[] }[]> = {}
+      for (const variant of variants) {
+        const spec = specsByVariant.get(variant.id)
+        const measurements = spec ? [
+          ['Pecho', spec.ancho_pecho_cm],
+          ['Cintura', spec.ancho_cintura_cm],
+          ['Cadera', spec.ancho_cadera_cm],
+          ['Hombros', spec.ancho_hombros_cm],
+          ['Largo', spec.largo_total_cm],
+        ].filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]))
+          .map(([label, value]) => `${label} ${value} cm`) : []
+        const productVariants = summary[String(variant.producto_id)] ?? []
+        productVariants.push({ size: variant.talla, color: variant.nombre_color, measurements })
+        summary[String(variant.producto_id)] = productVariants
+      }
+      setProductVariantSummary(summary)
+    } catch (error) {
+      setProductVariantError(error instanceof Error ? error.message : 'No se pudieron cargar las tallas y medidas.')
+    } finally {
+      setLoadingProductVariants(false)
+    }
+  }
 
   async function loadData() {
     setIsLoading(true)
@@ -2381,6 +2433,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
       if (errors.length) setDbError(errors.map(error => error?.message).join(' '))
       setDbOrders(ordersResult.data ?? [])
       setDbProducts(productsResult.data ?? [])
+      await loadProductVariantSummary(productsResult.data ?? [])
       setDbCategories(categoriesResult.data ?? [])
       setDbClients(clientsResult.data ?? [])
       setDbReturns(returnsResult.data ?? [])
@@ -2861,14 +2914,16 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
         <div>
           <p className="text-xs font-600 uppercase tracking-[0.2em] text-[#C9A96E]">Catálogo</p>
           <h1 className="font-display text-3xl text-[#0D0D0D] mt-2">Productos</h1>
+          <p className="mt-2 text-sm text-[#6B6860]">Consulta las tallas activas y sus medidas; usa «Tallas y medidas» para registrar o editar variantes.</p>
         </div>
         <button onClick={() => openProductEditor()} className="bg-[#0D0D0D] text-white px-4 py-2 text-xs font-600 uppercase tracking-wide hover:bg-[#C9A96E] hover:text-[#0D0D0D] transition-colors">
           Añadir producto
         </button>
       </div>
 
-      <div className="bg-white border border-[#E6E1D8] overflow-hidden">
-        <table className="min-w-full text-left">
+      {productVariantError && <p role="alert" className="border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">No se pudieron cargar las tallas y medidas: {productVariantError}</p>}
+      <div className="overflow-x-auto border border-[#E6E1D8] bg-white">
+        <table className="min-w-[1050px] w-full text-left">
           <thead className="bg-[#F5F1ED] text-[#6B6860] text-xs uppercase tracking-wide">
             <tr>
               <th className="px-4 py-3 font-600">Producto</th>
@@ -2876,6 +2931,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
               <th className="px-4 py-3 font-600">Categoría</th>
               <th className="px-4 py-3 font-600">Precio</th>
               <th className="px-4 py-3 font-600">Stock</th>
+              <th className="px-4 py-3 font-600">Tallas y medidas</th>
               <th className="px-4 py-3 font-600">Etiqueta</th>
               <th className="px-4 py-3 font-600">Acciones</th>
             </tr>
@@ -2888,6 +2944,16 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
                 <td className="px-4 py-3">{row.category}</td>
                 <td className="px-4 py-3">{row.price}</td>
                 <td className="px-4 py-3">{row.stock}</td>
+                <td className="px-4 py-3">
+                  {loadingProductVariants ? <span className="text-xs text-[#6B6860]">Cargando…</span> : (productVariantSummary[String(row.id)] ?? []).length ? (
+                    <ul className="space-y-2">
+                      {(productVariantSummary[String(row.id)] ?? []).map((variant, index) => <li key={`${variant.size}-${variant.color}-${index}`} className="text-xs">
+                        <span className="font-700">{variant.size} · {variant.color}</span>
+                        <span className="block text-[#6B6860]">{variant.measurements.length ? variant.measurements.join(' · ') : 'Sin medidas registradas'}</span>
+                      </li>)}
+                    </ul>
+                  ) : <span className="text-xs text-[#6B6860]">Sin tallas registradas</span>}
+                </td>
                 <td className="px-4 py-3"><span className="inline-flex px-2.5 py-1 text-[10px] font-700 rounded-full bg-[#F2EFE9] text-[#0D0D0D]">{row.tag}</span></td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2">
@@ -3317,7 +3383,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
           </form>
         </div>
       )}
-      {measurementProduct && <GarmentMeasurementEditor product={measurementProduct} onClose={() => setMeasurementProduct(null)} />}
+      {measurementProduct && <GarmentMeasurementEditor product={measurementProduct} onClose={() => setMeasurementProduct(null)} onSaved={() => loadProductVariantSummary()} />}
     </div>
   )
 }
