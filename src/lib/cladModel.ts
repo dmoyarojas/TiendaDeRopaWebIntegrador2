@@ -1,13 +1,18 @@
-import { Box3, Group, type Object3D } from 'three'
+import { Box3, Group, Mesh, type Object3D } from 'three'
 import { clone } from 'three/addons/utils/SkeletonUtils.js'
 
 export function prepareCladScene(scene: Object3D) {
-  // Solo rotación y traslación; las dimensiones en metros deben conservarse.
+  // Clad exporta en Z-up y mira hacia -Y; esta conversión deja el frente en +Z.
   const oriented = new Group()
   const zUp = new Group()
   zUp.rotation.x = -Math.PI / 2
-  zUp.add(clone(scene))
-  oriented.rotation.y = Math.PI
+  const model = clone(scene)
+  model.traverse(object => {
+    if (!(object instanceof Mesh)) return
+    object.geometry = object.geometry.clone()
+    if (!object.geometry.getAttribute('normal')) object.geometry.computeVertexNormals()
+  })
+  zUp.add(model)
   oriented.add(zUp)
   oriented.updateMatrixWorld(true)
   const bounds = new Box3().setFromObject(oriented)

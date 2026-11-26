@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" fill="none">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="800" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EEE8DE"/>
+      <stop offset="1" stop-color="#D8CBB7"/>
+    </linearGradient>
+    <linearGradient id="garment" x1="268" y1="310" x2="548" y2="802" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#39352F"/>
+      <stop offset="1" stop-color="#171614"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#background)" d="M0 0h800v1000H0z"/>
+  <path fill="#C9A96E" fill-opacity=".12" d="M400 80c180 0 325 145 325 325v595H75V405C75 225 220 80 400 80Z"/>
+  <path stroke="#C9A96E" stroke-linecap="round" stroke-width="8" d="M400 205v-40c0-25 38-25 38 0 0 12-10 21-22 21"/>
+  <path stroke="#C9A96E" stroke-linecap="round" stroke-linejoin="round" stroke-width="8" d="m400 204-190 105m190-105 190 105M210 309h380"/>
+  <path fill="url(#garment)" d="m304 311 96-45 96 45 102 73-58 85-53-31v357H313V438l-53 31-58-85 102-73Z"/>
+  <path stroke="#C9A96E" stroke-opacity=".7" stroke-width="5" d="m400 267 1 526m-87-355 42 17m132-17-42 17"/>
+  <path fill="#C9A96E" d="M397 335h6v9h-6zm0 47h6v9h-6zm0 47h6v9h-6zm0 47h6v9h-6zm0 47h6v9h-6z"/>
+  <path fill="#6B6860" fill-opacity=".45" d="M130 834h540v12H130zm45 33h450v8H175z"/>
+  <text x="400" y="928" fill="#6B6860" font-family="Georgia,serif" font-size="24" letter-spacing="8" text-anchor="middle">VELOUR</text>
+</svg>
