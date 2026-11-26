@@ -1,4 +1,14 @@
 import assert from "node:assert/strict"
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import ts from 'typescript'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { buildAdminOrderRows } from '../src/lib/adminOrders.ts'
+import * as garmentModel from '../src/lib/garmentModel.ts'
 
 import { readFileSync } from "node:fs"
 
@@ -178,6 +188,19 @@ const Fitting = loadComponent("src/components/FittingExperience.tsx", {
 
   "./CladAvatarControls": { default: () => null },
   "./AvatarAccuracyReport": { default: () => null },
+  const empty = renderToStaticMarkup(React.createElement(OrdersPanel, { rows: [], loading, onRefresh: async () => {}, onStatusChange: async () => {} }))
+  assert.ok(empty.includes(loading ? 'Cargando pedidos' : 'No hay pedidos registrados'))
+}
+
+const body = { gender: 'F', height: 170, weight: 65, chest: 92, waist: 74, hips: 98, shoulder: 40, inseam: 78 }
+const avatar = { modelUrl: 'https://private.test/avatar.glb', busy: false, loading: false, accuracy: null, savedBody: body }
+const Fitting = loadComponent('src/components/FittingExperience.tsx', {
+  '../lib/supabase': { supabase: {} },
+  '../lib/fitting': { readSavedBody: () => body, assessFit: () => null, isReferenceMeasurements: () => false },
+  '../lib/clad': { useCladAvatar: () => avatar },
+  '../lib/garmentModel': garmentModel,
+  './FittingAvatar3D': { default: ({ bodyModelUrl }) => React.createElement('div', { 'data-avatar': bodyModelUrl }) },
+  './CladAvatarControls': { default: () => null }, './AvatarAccuracyReport': { default: () => null },
 })
 
 const products = [
@@ -1159,6 +1182,17 @@ if (process.argv.includes("--supabase")) {
       "id,numero_orden,monto_total,creado_el,perfiles(nombre,apellido),pedido_productos(id,codigo_producto,nombre_producto,talla,estado)",
     )
 
+assert.ok(fittingHtml.includes('Sin tallas registradas'))
+const profileHtml = renderToStaticMarkup(React.createElement(Fitting, { mode: 'profile', products, setPage: () => {} }))
+assert.ok(profileHtml.includes('Prueba una prenda'))
+assert.ok(profileHtml.includes('Selecciona una prenda para tu avatar'))
+console.log('Pedidos: renderizado con artículos, pedidos antiguos, datos incompletos y estados vacíos verificado.')
+console.log('Avatar y probador: selector de prenda, tallas y visualización orientativa presentes.')
+
+if (process.argv.includes('--supabase')) {
+  const { createClient } = await import('@supabase/supabase-js')
+  const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data, error } = await db.from('pedidos').select('id,numero_orden,monto_total,creado_el,perfiles(nombre,apellido),pedido_productos(id,codigo_producto,nombre_producto,talla,estado)')
   if (error) throw new Error(error.message)
 
   const realRows = buildAdminOrderRows(data, 1000)

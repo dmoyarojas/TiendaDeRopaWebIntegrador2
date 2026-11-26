@@ -30,7 +30,7 @@ No es necesario poner la clave de Clad en `.env.seed.local`. La clave administra
 - El modelo geométrico anterior fue eliminado. Mientras Clad genera el cuerpo o descarga el GLB, se muestra el estado de carga; un fallo muestra un mensaje.
 - El perfil y el probador comparan las seis medidas de la malla devueltas por Clad con los objetivos guardados. La tolerancia del proyecto es de 1 cm por medida y está definida en `src/lib/cladAccuracy.ts`. Si falta una medida o alguna excede la tolerancia, el modelo queda marcado para revisión. El resultado sigue visible para inspeccionarlo; no se considera ajustado dentro de la tolerancia. Esta comparación no comprueba por separado la geometría del GLB ni acredita un escaneo o una precisión del 100%.
 - Este cambio utiliza `body_input` y `measurements`, que ya existen en `avatares_clad`, y no requiere un nuevo SQL ni desplegar de nuevo la Edge Function. Los modelos ya generados se comprueban al abrirlos.
-- Con el cuerpo Clad se muestra el avatar corporal. La simulación física de ropa requiere la integración adicional de Clad para prendas y sus patrones/materiales.
+- El probador genera prendas orientativas sobre la malla corporal de Clad. El ajuste visual usa las secciones de esa malla y el cálculo de talla usa las medidas registradas. Consulta el alcance en [PROBADOR.md](PROBADOR.md).
 - Esta versión usa cuestionario y medidas; no envía fotos. La API puede consumir cuota tanto al crear el cuerpo como al ajustarlo; consulta el plan de tu cuenta.
 
 Contrato verificado: [Swagger de Clad](https://api.clad.you/) y [biblioteca corporal oficial](https://github.com/datar-psa/clad-body).
