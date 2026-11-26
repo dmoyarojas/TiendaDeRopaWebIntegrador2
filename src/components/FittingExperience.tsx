@@ -5,6 +5,7 @@ import {
   type BodyMeasurements, type FittingVariant, type GarmentMeasurements,
 } from '../lib/fitting'
 import FittingAvatar3D from './FittingAvatar3D'
+import ImageWithFallback from './ImageWithFallback'
 import CladAvatarControls from './CladAvatarControls'
 import { useCladAvatar } from '../lib/clad'
 import AvatarAccuracyReport from './AvatarAccuracyReport'
@@ -49,7 +50,7 @@ async function loadVariants(): Promise<FittingVariant[]> {
   const ids = rows.map(row => row.id)
   const [specsResult, modelsResult] = await Promise.all([
     supabase.from('especificaciones_prenda')
-      .select('variante_producto_id, ancho_pecho_cm, ancho_cintura_cm, ancho_cadera_cm, ancho_hombros_cm, largo_total_cm, porcentaje_elasticidad')
+      .select('variante_producto_id, ancho_pecho_cm, ancho_cintura_cm, ancho_cadera_cm, ancho_hombros_cm, largo_total_cm, largo_tiro_cm, largo_manga_cm, ancho_brazo_cm, ancho_puno_cm, ancho_muslo_cm, ancho_rodilla_cm, ancho_bajo_cm, ancho_bajo_pierna_cm, porcentaje_elasticidad, tipo_corte')
       .in('variante_producto_id', ids),
     supabase.from('recursos_3d_ropa').select('variante_producto_id, url_malla_glb').in('variante_producto_id', ids),
   ])
@@ -64,6 +65,11 @@ async function loadVariants(): Promise<FittingVariant[]> {
       chestWidth: numberOrNull(spec.ancho_pecho_cm), waistWidth: numberOrNull(spec.ancho_cintura_cm),
       hipWidth: numberOrNull(spec.ancho_cadera_cm), shoulderWidth: numberOrNull(spec.ancho_hombros_cm),
       length: numberOrNull(spec.largo_total_cm), stretchPercent: Number(spec.porcentaje_elasticidad ?? 0),
+      rise: numberOrNull(spec.largo_tiro_cm), cut: typeof spec.tipo_corte === 'string' ? spec.tipo_corte : null,
+      sleeveLength: numberOrNull(spec.largo_manga_cm), armWidth: numberOrNull(spec.ancho_brazo_cm),
+      cuffWidth: numberOrNull(spec.ancho_puno_cm), thighWidth: numberOrNull(spec.ancho_muslo_cm),
+      kneeWidth: numberOrNull(spec.ancho_rodilla_cm), hemWidth: numberOrNull(spec.ancho_bajo_cm),
+      legHemWidth: numberOrNull(spec.ancho_bajo_pierna_cm),
     } : null
     return {
       id: row.id, productId: row.producto_id, size: row.talla, color: row.nombre_color,
@@ -228,7 +234,7 @@ export default function FittingExperience({ mode, products, setPage, initialProd
               busy={cladAvatar.busy}
               needsReview={!cladAvatar.accuracy?.withinTolerance}
               body={body}
-              garment={product && selectedVariant ? { measurements: fit ? selectedVariant.measurements : null, category: product.category, colorHex: selectedVariant.colorHex } : null}
+              garment={product && selectedVariant ? { measurements: selectedVariant.measurements, category: product.category, name: product.name, colorHex: selectedVariant.colorHex } : null}
             />
             <p className="border-t border-[#DDD9D0] px-4 py-3 text-xs text-[#6B6860]">Arrastra para girar el avatar. La prenda es una visualización 3D orientativa basada en sus medidas, no una simulación física de tela.</p>
             <div className="border-t border-[#DDD9D0] bg-white p-4">
@@ -293,11 +299,11 @@ export default function FittingExperience({ mode, products, setPage, initialProd
         {!body ? <div className="mt-8 border border-[#DDD9D0] bg-white p-8"><p role="status" className="text-sm text-[#6B6860]">{cladAvatar.loading ? 'Recuperando tu avatar y sus medidas…' : 'Necesitas guardar tus medidas antes de probarte ropa.'}</p>{cladAvatar.error && <p role="alert" className="mt-3 text-sm text-red-700">{cladAvatar.error}</p>}<button onClick={() => setPage('avatar')} className="mt-4 bg-[#0D0D0D] px-5 py-3 text-sm text-white">Ir a Mi Avatar</button></div> : (
           <div className="mt-8 grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="border border-[#DDD9D0] bg-white">
-              <FittingAvatar3D bodyModelUrl={cladAvatar.modelUrl} busy={cladAvatar.busy || cladAvatar.loading} needsReview={!cladAvatar.accuracy?.withinTolerance} body={body} garment={product && selectedVariant ? { measurements: fit ? selectedVariant.measurements : null, category: product.category, colorHex: selectedVariant.colorHex } : null} />
+              <FittingAvatar3D bodyModelUrl={cladAvatar.modelUrl} busy={cladAvatar.busy || cladAvatar.loading} needsReview={!cladAvatar.accuracy?.withinTolerance} body={body} garment={product && selectedVariant ? { measurements: selectedVariant.measurements, category: product.category, name: product.name, colorHex: selectedVariant.colorHex } : null} />
               {cladAvatar.error && <div role="alert" className="border-t border-[#DDD9D0] p-4 text-sm text-red-700"><p>{cladAvatar.error}</p><button onClick={cladAvatar.reload} className="mt-2 underline">Volver a cargar mi avatar</button></div>}
               {cladAvatar.outdated && <p className="p-4 text-sm text-amber-900">Tus medidas cambiaron. Actualiza el modelo desde Mi Avatar.</p>}
               {!cladAvatar.modelUrl && !cladAvatar.busy && !cladAvatar.loading && <button onClick={() => setPage('avatar')} className="m-4 border border-[#DDD9D0] px-4 py-2 text-sm">Generar o revisar mi avatar</button>}
-              {product && <div className="flex items-center gap-4 border-t border-[#DDD9D0] p-4" aria-label="Prenda seleccionada"><img src={product.img} alt={product.name} className="h-24 w-20 object-cover" /><div><p className="text-xs text-[#6B6860]">Prenda seleccionada</p><h2 className="font-display text-xl">{product.name}</h2><p className="mt-1 text-sm">{selectedVariant ? `Talla ${selectedVariant.size} · ${selectedVariant.color}` : 'Sin tallas registradas'}</p><p className="mt-2 text-xs text-[#6B6860]">Representación 3D aproximada basada en las medidas registradas.</p></div></div>}
+              {product && <div className="flex items-center gap-4 border-t border-[#DDD9D0] p-4" aria-label="Prenda seleccionada"><ImageWithFallback src={product.img} alt={product.name} className="h-24 w-20 object-cover" /><div><p className="text-xs text-[#6B6860]">Prenda seleccionada</p><h2 className="font-display text-xl">{product.name}</h2><p className="mt-1 text-sm">{selectedVariant ? `Talla ${selectedVariant.size} · ${selectedVariant.color}` : 'Sin tallas registradas'}</p><p className="mt-2 text-xs text-[#6B6860]">Representación 3D aproximada basada en las medidas registradas.</p></div></div>}
               {cladAvatar.modelUrl && <p className="px-4 py-3 text-xs text-[#6B6860]">La recomendación de talla se calcula con tus medidas y las medidas registradas de la prenda; el visor no simula la física de la tela.</p>}
               <div className="flex items-center justify-between gap-3 p-4 text-xs text-[#6B6860]"><span>Arrastra para girar · Acerca con la rueda</span><button onClick={() => setPage('avatar')} className="font-700 text-[#0D0D0D] underline">Editar mis medidas</button></div>
             </div>
@@ -305,7 +311,7 @@ export default function FittingExperience({ mode, products, setPage, initialProd
               <div className="border border-[#DDD9D0] bg-white p-5">
                 <h2 className="font-display text-xl text-[#0D0D0D]">Prenda</h2>
                 <div className="mt-3 max-h-44 space-y-2 overflow-y-auto">
-                  {products.map(item => <button key={item.id} aria-pressed={item.id === selectedProductId} onClick={() => { setSelectedProductId(item.id); setSelectedVariantId(null); onProductChange?.(item.id) }} className={`flex w-full items-center gap-3 border p-2 text-left ${item.id === selectedProductId ? 'border-[#C9A96E] bg-[#FAF8F5]' : 'border-[#DDD9D0]'}`}><img src={item.img} alt="" className="h-12 w-10 object-cover" /><span className="text-sm font-600">{item.name}</span></button>)}
+                  {products.map(item => <button key={item.id} aria-pressed={item.id === selectedProductId} onClick={() => { setSelectedProductId(item.id); setSelectedVariantId(null); onProductChange?.(item.id) }} className={`flex w-full items-center gap-3 border p-2 text-left ${item.id === selectedProductId ? 'border-[#C9A96E] bg-[#FAF8F5]' : 'border-[#DDD9D0]'}`}><ImageWithFallback src={item.img} alt="" className="h-12 w-10 object-cover" /><span className="text-sm font-600">{item.name}</span></button>)}
                 </div>
                 {loadingVariants && <p className="mt-3 text-sm text-[#6B6860]">Cargando tallas…</p>}
                 {variantError && <p role="alert" className="mt-3 text-sm text-red-700">No se pudieron cargar las medidas: {variantError}</p>}

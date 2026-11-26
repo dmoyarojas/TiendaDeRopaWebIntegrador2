@@ -16,6 +16,15 @@ export interface GarmentMeasurements {
   shoulderWidth: number | null
   length: number | null
   stretchPercent: number
+  rise?: number | null
+  cut?: string | null
+  sleeveLength?: number | null
+  armWidth?: number | null
+  cuffWidth?: number | null
+  thighWidth?: number | null
+  kneeWidth?: number | null
+  hemWidth?: number | null
+  legHemWidth?: number | null
 }
 
 export interface FittingVariant {
@@ -47,6 +56,9 @@ export function isReferenceMeasurements(name: string, category: string, size: st
   }
   return Object.entries(template).every(([key, value]) => key === 'largo_tiro_cm' || values[key] === value)
     && garment.stretchPercent === 0
+    && garment.sleeveLength == null && garment.armWidth == null && garment.cuffWidth == null
+    && garment.thighWidth == null && garment.kneeWidth == null
+    && garment.hemWidth == null && garment.legHemWidth == null
 }
 
 export type FitStatus = 'ajustado' | 'adecuado' | 'holgado'

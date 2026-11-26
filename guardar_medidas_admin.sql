@@ -1,9 +1,32 @@
--- Ejecutar una vez en Supabase SQL Editor, con el propietario de la base.
+-- Ejecutar o volver a ejecutar en Supabase SQL Editor, con el propietario de la base.
 -- Guarda la variante y sus medidas en una sola transacción, comprobando el rol
 -- del usuario autenticado. La función usa SECURITY DEFINER para no depender de
 -- las políticas RLS de UPDATE que bloquean el editor actual.
 
 BEGIN;
+
+ALTER TABLE public.especificaciones_prenda
+  ADD COLUMN IF NOT EXISTS largo_manga_cm numeric,
+  ADD COLUMN IF NOT EXISTS ancho_brazo_cm numeric,
+  ADD COLUMN IF NOT EXISTS ancho_puno_cm numeric,
+  ADD COLUMN IF NOT EXISTS ancho_muslo_cm numeric,
+  ADD COLUMN IF NOT EXISTS ancho_rodilla_cm numeric,
+  ADD COLUMN IF NOT EXISTS ancho_bajo_cm numeric,
+  ADD COLUMN IF NOT EXISTS ancho_bajo_pierna_cm numeric;
+
+DROP FUNCTION IF EXISTS public.guardar_talla_y_medidas_admin(
+  uuid, uuid, text, text, text, numeric, integer,
+  numeric, numeric, numeric, numeric, numeric, numeric
+);
+DROP FUNCTION IF EXISTS public.guardar_talla_y_medidas_admin(
+  uuid, uuid, text, text, text, numeric, integer,
+  numeric, numeric, numeric, numeric, numeric, numeric, numeric, text
+);
+DROP FUNCTION IF EXISTS public.guardar_talla_y_medidas_admin(
+  uuid, uuid, text, text, text, numeric, integer,
+  numeric, numeric, numeric, numeric, numeric, numeric, numeric,
+  numeric, numeric, numeric, numeric, numeric, numeric, text
+);
 
 CREATE OR REPLACE FUNCTION public.guardar_talla_y_medidas_admin(
   p_producto_id uuid,
@@ -18,7 +41,16 @@ CREATE OR REPLACE FUNCTION public.guardar_talla_y_medidas_admin(
   p_ancho_cadera_cm numeric,
   p_ancho_hombros_cm numeric,
   p_largo_total_cm numeric,
-  p_porcentaje_elasticidad numeric
+  p_largo_tiro_cm numeric,
+  p_largo_manga_cm numeric,
+  p_ancho_brazo_cm numeric,
+  p_ancho_puno_cm numeric,
+  p_ancho_muslo_cm numeric,
+  p_ancho_rodilla_cm numeric,
+  p_ancho_bajo_cm numeric,
+  p_ancho_bajo_pierna_cm numeric,
+  p_porcentaje_elasticidad numeric,
+  p_tipo_corte text
 )
 RETURNS uuid
 LANGUAGE plpgsql
@@ -46,7 +78,13 @@ BEGIN
   IF (p_ancho_pecho_cm IS NULL OR p_ancho_pecho_cm <= 0)
      AND (p_ancho_cintura_cm IS NULL OR p_ancho_cintura_cm <= 0)
      AND (p_ancho_cadera_cm IS NULL OR p_ancho_cadera_cm <= 0)
-     AND (p_ancho_hombros_cm IS NULL OR p_ancho_hombros_cm <= 0) THEN
+     AND (p_ancho_hombros_cm IS NULL OR p_ancho_hombros_cm <= 0)
+     AND (p_ancho_brazo_cm IS NULL OR p_ancho_brazo_cm <= 0)
+     AND (p_ancho_puno_cm IS NULL OR p_ancho_puno_cm <= 0)
+     AND (p_ancho_muslo_cm IS NULL OR p_ancho_muslo_cm <= 0)
+     AND (p_ancho_rodilla_cm IS NULL OR p_ancho_rodilla_cm <= 0)
+     AND (p_ancho_bajo_cm IS NULL OR p_ancho_bajo_cm <= 0)
+     AND (p_ancho_bajo_pierna_cm IS NULL OR p_ancho_bajo_pierna_cm <= 0) THEN
     RAISE EXCEPTION 'Ingresa al menos un ancho de prenda mayor que cero.' USING ERRCODE = '22023';
   END IF;
   IF (p_ancho_pecho_cm IS NOT NULL AND p_ancho_pecho_cm < 0)
@@ -54,8 +92,17 @@ BEGIN
      OR (p_ancho_cadera_cm IS NOT NULL AND p_ancho_cadera_cm < 0)
      OR (p_ancho_hombros_cm IS NOT NULL AND p_ancho_hombros_cm < 0)
      OR (p_largo_total_cm IS NOT NULL AND p_largo_total_cm < 0)
+     OR (p_largo_tiro_cm IS NOT NULL AND p_largo_tiro_cm < 0)
+     OR (p_largo_manga_cm IS NOT NULL AND p_largo_manga_cm < 0)
+     OR (p_ancho_brazo_cm IS NOT NULL AND p_ancho_brazo_cm < 0)
+     OR (p_ancho_puno_cm IS NOT NULL AND p_ancho_puno_cm < 0)
+     OR (p_ancho_muslo_cm IS NOT NULL AND p_ancho_muslo_cm < 0)
+     OR (p_ancho_rodilla_cm IS NOT NULL AND p_ancho_rodilla_cm < 0)
+     OR (p_ancho_bajo_cm IS NOT NULL AND p_ancho_bajo_cm < 0)
+     OR (p_ancho_bajo_pierna_cm IS NOT NULL AND p_ancho_bajo_pierna_cm < 0)
      OR p_porcentaje_elasticidad IS NULL OR p_porcentaje_elasticidad < 0
-     OR p_porcentaje_elasticidad > 100 THEN
+     OR p_porcentaje_elasticidad > 100
+     OR nullif(trim(p_tipo_corte), '') IS NULL THEN
     RAISE EXCEPTION 'Las medidas deben estar dentro de un rango válido.' USING ERRCODE = '22023';
   END IF;
 
@@ -79,17 +126,30 @@ BEGIN
 
   INSERT INTO public.especificaciones_prenda (
     variante_producto_id, ancho_pecho_cm, ancho_cintura_cm, ancho_cadera_cm,
-    ancho_hombros_cm, largo_total_cm, porcentaje_elasticidad
+    ancho_hombros_cm, largo_total_cm, largo_tiro_cm, largo_manga_cm,
+    ancho_brazo_cm, ancho_puno_cm, ancho_muslo_cm, ancho_rodilla_cm,
+    ancho_bajo_cm, ancho_bajo_pierna_cm, porcentaje_elasticidad, tipo_corte
   ) VALUES (
     v_id, p_ancho_pecho_cm, p_ancho_cintura_cm, p_ancho_cadera_cm,
-    p_ancho_hombros_cm, p_largo_total_cm, p_porcentaje_elasticidad
+    p_ancho_hombros_cm, p_largo_total_cm, p_largo_tiro_cm, p_largo_manga_cm,
+    p_ancho_brazo_cm, p_ancho_puno_cm, p_ancho_muslo_cm, p_ancho_rodilla_cm,
+    p_ancho_bajo_cm, p_ancho_bajo_pierna_cm, p_porcentaje_elasticidad, trim(p_tipo_corte)
   ) ON CONFLICT (variante_producto_id) DO UPDATE SET
     ancho_pecho_cm = EXCLUDED.ancho_pecho_cm,
     ancho_cintura_cm = EXCLUDED.ancho_cintura_cm,
     ancho_cadera_cm = EXCLUDED.ancho_cadera_cm,
     ancho_hombros_cm = EXCLUDED.ancho_hombros_cm,
     largo_total_cm = EXCLUDED.largo_total_cm,
-    porcentaje_elasticidad = EXCLUDED.porcentaje_elasticidad;
+    largo_tiro_cm = EXCLUDED.largo_tiro_cm,
+    largo_manga_cm = EXCLUDED.largo_manga_cm,
+    ancho_brazo_cm = EXCLUDED.ancho_brazo_cm,
+    ancho_puno_cm = EXCLUDED.ancho_puno_cm,
+    ancho_muslo_cm = EXCLUDED.ancho_muslo_cm,
+    ancho_rodilla_cm = EXCLUDED.ancho_rodilla_cm,
+    ancho_bajo_cm = EXCLUDED.ancho_bajo_cm,
+    ancho_bajo_pierna_cm = EXCLUDED.ancho_bajo_pierna_cm,
+    porcentaje_elasticidad = EXCLUDED.porcentaje_elasticidad,
+    tipo_corte = EXCLUDED.tipo_corte;
 
   RETURN v_id;
 END;
@@ -97,11 +157,13 @@ $$;
 
 REVOKE ALL ON FUNCTION public.guardar_talla_y_medidas_admin(
   uuid, uuid, text, text, text, numeric, integer,
-  numeric, numeric, numeric, numeric, numeric, numeric
+  numeric, numeric, numeric, numeric, numeric, numeric, numeric,
+  numeric, numeric, numeric, numeric, numeric, numeric, numeric, text
 ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.guardar_talla_y_medidas_admin(
   uuid, uuid, text, text, text, numeric, integer,
-  numeric, numeric, numeric, numeric, numeric, numeric
+  numeric, numeric, numeric, numeric, numeric, numeric, numeric,
+  numeric, numeric, numeric, numeric, numeric, numeric, numeric, text
 ) TO authenticated;
 
 COMMIT;

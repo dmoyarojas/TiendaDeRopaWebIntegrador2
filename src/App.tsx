@@ -4,6 +4,7 @@ import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { supabase } from './lib/supabase'
 import GarmentMeasurementEditor from './components/GarmentMeasurementEditor'
+import ImageWithFallback from './components/ImageWithFallback'
 import { BODY_STORAGE_KEY } from './lib/fitting'
 import AdminOrdersPanel from './components/AdminOrdersPanel'
 import { buildAdminOrderRows } from './lib/adminOrders'
@@ -466,8 +467,8 @@ function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; 
 
       {/* Hero */}
       <section ref={heroRef} className="relative min-h-[92vh] flex items-end overflow-hidden bg-[#0D0D0D]">
-        <img
-          src="https://images.unsplash.com/photo-1603400521630-9f2de124b33b?w=1400&h=900&fit=crop&auto=format"
+        <ImageWithFallback
+          src={featured[0]?.img}
           alt="Colección VELOUR — prendas de diseño exclusivo"
           className="absolute inset-0 w-full h-full object-cover opacity-50"
         />
@@ -521,9 +522,9 @@ function HomePage({ setPage, products, onTryOn }: { setPage: (p: Page) => void; 
               </button>
             </div>
             <div className="relative">
-              <img
-                src="https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=700&h=600&fit=crop&auto=format"
-                alt="Interior de tienda VELOUR con racks de ropa de diseño"
+              <ImageWithFallback
+                src={featured[1]?.img}
+                alt={featured[1]?.name ?? 'Prenda de la colección VELOUR'}
                 className="w-full h-80 sm:h-96 object-cover"
               />
               <div className="absolute -bottom-4 -left-4 bg-[#C9A96E] text-[#0D0D0D] p-4 font-display text-lg font-700">
@@ -652,7 +653,7 @@ function ProductCard({
       onMouseLeave={() => setHovered(false)}
     >
       <div className="relative overflow-hidden bg-[#E8E4DC] mb-3">
-        <img
+        <ImageWithFallback
           src={product.img}
           alt={product.name}
           className={`w-full object-cover transition-transform duration-500 group-hover:scale-105 ${compact ? 'h-64 sm:h-72' : 'h-72 sm:h-80'}`}
@@ -847,7 +848,7 @@ function CartPage({ cart, setCart, setPage, onCheckout }: {
             <div className="lg:col-span-2 space-y-4">
               {cart.map(item => (
                 <div key={`${item.id}-${item.size}`} className="flex gap-4 p-4 bg-white border border-[#DDD9D0] hover:border-[#C9A96E] transition-colors">
-                  <img src={item.img} alt={item.name} className="w-20 h-24 sm:w-24 sm:h-28 object-cover bg-[#E8E4DC] shrink-0" />
+                  <ImageWithFallback src={item.img} alt={item.name} className="w-20 h-24 sm:w-24 sm:h-28 object-cover bg-[#E8E4DC] shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-[#6B6860] text-[10px] font-600 tracking-widest uppercase mb-0.5">{item.category}</p>
                     <h3 className="font-display font-600 text-[#0D0D0D] truncate mb-1">{item.name}</h3>
@@ -1009,7 +1010,7 @@ function LoginPage({ setPage, returnPage, onAuthenticated }: { setPage: (p: Page
     <div ref={pageRef} className="min-h-screen bg-[#FAF8F5] pt-16 flex">
       {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 bg-[#0D0D0D] relative overflow-hidden">
-        <img
+        <ImageWithFallback
           src="https://images.unsplash.com/photo-1549570652-97324981a6fd?w=800&h=1000&fit=crop&auto=format"
           alt="Modelo con vestido de la colección VELOUR"
           className="absolute inset-0 w-full h-full object-cover opacity-60"
@@ -1527,7 +1528,7 @@ function RegisterPage({ setPage, returnPage, onAuthenticated }: { setPage: (p: P
   return (
     <div ref={pageRef} className="min-h-screen bg-[#FAF8F5] pt-16 flex">
       <div className="hidden lg:flex lg:w-1/2 bg-[#F2EFE9] relative overflow-hidden flex-col justify-end p-12">
-        <img
+        <ImageWithFallback
           src="https://images.unsplash.com/photo-1614028609503-590a6a47146a?w=800&h=1000&fit=crop&auto=format"
           alt="Colección VELOUR"
           className="absolute inset-0 w-full h-full object-cover opacity-40"
@@ -2198,7 +2199,7 @@ function CheckoutPage({ cart, onSuccess, setPage }: { cart: CartItem[]; onSucces
                   {cart.map(item => (
                     <div key={`${item.id}-${item.size}`} className="flex gap-3">
                       <div className="relative shrink-0">
-                        <img src={item.img} alt={item.name} className="w-12 h-14 object-cover bg-[#E8E4DC]" />
+                        <ImageWithFallback src={item.img} alt={item.name} className="w-12 h-14 object-cover bg-[#E8E4DC]" />
                         <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-[#0D0D0D] text-white text-[9px] font-700 rounded-full flex items-center justify-center">{item.qty}</span>
                       </div>
                       <div className="flex-1 min-w-0">
@@ -2294,7 +2295,7 @@ function ConfirmStep({ orderNum, returnCode, total, shipping, cart, onDownloadRe
         <div className="space-y-3">
           {cart.map(item => (
             <div key={`${item.id}-${item.size}`} className="flex items-center gap-3">
-              <img src={item.img} alt={item.name} className="w-10 h-12 object-cover bg-[#E8E4DC] shrink-0" />
+              <ImageWithFallback src={item.img} alt={item.name} className="w-10 h-12 object-cover bg-[#E8E4DC] shrink-0" />
               <div className="flex-1">
                 <p className="text-xs font-600 text-[#0D0D0D]">{item.name} × {item.qty}</p>
                 <p className="text-[10px] text-[#6B6860]">Talla {item.size}</p>
@@ -2808,13 +2809,18 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
   }, [selectedReturn.imagePath, selectedReturn.receiptPath])
 
   const sales = Array.from({ length: 12 }, () => 0)
+  const monthlyOrderCounts = Array.from({ length: 12 }, () => 0)
+  const currentYear = new Date().getFullYear()
   dbOrders.forEach(order => {
     const orderDate = new Date(order.creado_el)
-    if (orderDate.getFullYear() === new Date().getFullYear()) {
-      sales[orderDate.getMonth()] += Number(order.monto_total) / PRICE_STORAGE_SCALE || 0
+    if (orderDate.getFullYear() === currentYear) {
+      const month = orderDate.getMonth()
+      sales[month] += Number(order.monto_total) / PRICE_STORAGE_SCALE || 0
+      monthlyOrderCounts[month] += 1
     }
   })
   const maxMonthlySales = Math.max(...sales, 1)
+  const monthLabels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
   const getStatusClasses = (status: string) => {
     switch (status) {
@@ -2884,12 +2890,22 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
             <p className="text-[10px] font-800 uppercase tracking-[0.3em] text-[#6B6860]">Rendimiento Anual</p>
             <h2 className="font-display text-3xl text-[#0D0D0D] mt-2">Ventas Mensuales</h2>
           </div>
-          <span className="px-5 py-2 bg-[#0D0D0D] text-[#C9A96E] text-xs font-700 rounded-full shadow-lg">{new Date().getFullYear()}</span>
+          <span className="px-5 py-2 bg-[#0D0D0D] text-[#C9A96E] text-xs font-700 rounded-full shadow-lg">{currentYear}</span>
         </div>
 
         <div className="flex items-end justify-between h-72 gap-2 sm:gap-4 relative z-10">
           {sales.map((value, index) => (
-            <div key={index} className="flex-1 flex flex-col items-center gap-4">
+            <div
+              key={index}
+              tabIndex={0}
+              aria-label={`${monthLabels[index]} ${currentYear}: ${formatPrice(value)} en ventas, ${monthlyOrderCounts[index]} ${monthlyOrderCounts[index] === 1 ? 'pedido' : 'pedidos'}`}
+              className="group/month relative flex-1 flex flex-col items-center gap-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C9A96E]"
+            >
+              <div className={`pointer-events-none absolute bottom-full z-30 mb-3 w-36 rounded-xl bg-[#0D0D0D] px-3 py-2 text-center text-white opacity-0 shadow-xl transition-opacity duration-200 group-hover/month:opacity-100 group-focus-visible/month:opacity-100 ${index === 0 ? 'left-0' : index === sales.length - 1 ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}>
+                <p className="text-[10px] font-700 uppercase tracking-wider text-[#C9A96E]">{monthLabels[index]} {currentYear}</p>
+                <p className="mt-1 text-xs font-700">{formatPrice(value)}</p>
+                <p className="text-[10px] text-white/70">{monthlyOrderCounts[index]} {monthlyOrderCounts[index] === 1 ? 'pedido' : 'pedidos'}</p>
+              </div>
               <div className="w-full flex items-end justify-center h-56 relative group/bar">
                 <div
                   className="w-full max-w-[48px] rounded-t-2xl bg-gradient-to-t from-[#0D0D0D] to-[#3a3a3a] shadow-lg transition-all duration-500 group-hover/bar:from-[#C9A96E] group-hover/bar:to-[#F3D79F] group-hover/bar:scale-y-105 origin-bottom relative overflow-hidden"
@@ -2898,7 +2914,7 @@ function AdminDashboardPage({ setPage, onProductsChanged, session }: { setPage: 
                   <div className="absolute inset-0 bg-white/20 translate-y-full group-hover/bar:translate-y-0 transition-transform duration-700 ease-out"></div>
                 </div>
               </div>
-              <span className="text-[10px] font-800 text-[#6B6860] uppercase group-hover/bar:text-[#0D0D0D] transition-colors">{['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][index]}</span>
+              <span className="text-[10px] font-800 text-[#6B6860] uppercase group-hover/month:text-[#0D0D0D] group-focus-visible/month:text-[#0D0D0D] transition-colors">{monthLabels[index]}</span>
             </div>
           ))}
         </div>
@@ -3404,7 +3420,7 @@ function ForgotPasswordPage({ setPage }: { setPage: (p: Page) => void }) {
   return (
     <div ref={pageRef} className="min-h-screen bg-[#FAF8F5] pt-16 flex">
       <div className="hidden lg:flex lg:w-1/2 bg-[#0D0D0D] relative overflow-hidden">
-        <img
+        <ImageWithFallback
           src="https://images.unsplash.com/photo-1529139574466-a303027c1d8b?w=800&h=1000&fit=crop&auto=format"
           alt="Moda VELOUR"
           className="absolute inset-0 w-full h-full object-cover opacity-60"
